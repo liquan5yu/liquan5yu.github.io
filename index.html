@@ -568,6 +568,16 @@ table.tbl{width:100%;border-collapse:collapse;min-width:720px}
   </div>
 </div>
 
+<!-- 他人资料弹窗 -->
+<div class="modal-mask" id="profile-modal" hidden>
+  <div class="modal" style="max-width:480px">
+    <div class="modal-head"><h3>用户资料</h3>
+      <button class="modal-close" onclick="closeModal('profile-modal')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+    </div>
+    <div class="modal-body" id="pm-body"></div>
+  </div>
+</div>
+
 <script>
 /* ============================================================
    天涯论坛 · 前端演示实现
@@ -586,7 +596,11 @@ function seed(){
 }
 function normSettings(d){
   d.settings=Object.assign({loginOpen:true,maintenance:false,loginNotice:''},d.settings||{});
-  d.users.forEach(u=>{u.nick=u.nick||'';u.bio=u.bio||'';});
+  d.users.forEach(u=>{u.nick=u.nick||'';u.bio=u.bio||'';u.isFounder=!!u.isFounder;});
+  if(d.users.length&&!d.users.some(u=>u.isFounder)){
+    const found=d.users.find(u=>u.role==='admin')||d.users[0];
+    if(found)found.isFounder=true;
+  }
 }
 
 /* ===== 数据层 ===== */
@@ -652,6 +666,8 @@ function avatarHTML(name,cls){
   return `<span class="avatar ${cls||''}" style="background:${c}">${esc(name[0]||'?')}</span>`;
 }
 function badgeRole(u){
+  if(!u)return '';
+  if(u.isFounder)return '<span class="badge" style="background:linear-gradient(135deg,#D97706,#F59E0B);color:#fff">楼主</span>';
   if(u.role==='admin')return '<span class="badge badge-admin">管理员</span>';
   return '<span class="badge" style="background:var(--surface-2);color:var(--ink-2)">成员</span>';
 }
@@ -756,7 +772,7 @@ function doSetup(){
   if(p.length<4){toast('密码至少 4 位',true);return;}
   if(p!==p2){toast('两次输入的密码不一致',true);return;}
   const id=uid();
-  DB.users.push({id,username:u,password:p,role:'admin',createdAt:nowISO(),disabled:false,nick:'',bio:''});
+  DB.users.push({id,username:u,password:p,role:'admin',createdAt:nowISO(),disabled:false,nick:'',bio:'',isFounder:true});
   saveDB();setSession(id);
   toast(`管理员账号 ${u} 创建成功`);
   afterLogin();
@@ -813,6 +829,35 @@ function userDisabled(id){const u=DB.users.find(x=>x.id===id);return u?u.disable
 /* 发帖/评论/界面显示名：昵称优先，登录账号兜底 */
 function dispName(id){const u=DB.users.find(x=>x.id===id);return u?(u.nick||u.username):'已注销用户';}
 function userRef(id){const u=DB.users.find(x=>x.id===id);return u||{role:'user',nick:'',username:''};}
+/* 查看他人资料 */
+function openProfile(uid){
+  const u=DB.users.find(x=>x.id===uid);
+  if(!u){toast('该用户不存在',true);return;}
+  const dn=u.nick||u.username;
+  const posts=DB.posts.filter(p=>p.authorId===uid&&(!p.hidden||isAdmin())).sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt));
+  const comments=DB.posts.reduce((s,p)=>s+p.comments.filter(c=>c.authorId===uid&&(!c.hidden||isAdmin())).length,0);
+  document.getElementById('pm-body').innerHTML=`
+    <div style="display:flex;align-items:center;gap:14px;margin-bottom:16px">
+      ${avatarHTML(dn,'lg')}
+      <div>
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"><b style="font-size:18px">${esc(dn)}</b>${badgeRole(u)}</div>
+        <div style="font-size:12.5px;color:var(--ink-3);margin-top:3px">${u.isFounder?'论坛创始人':('登录账号 '+esc(u.username))} · 加入于 ${fmtTime(u.createdAt)}</div>
+      </div>
+    </div>
+    ${u.bio?`<div style="padding:12px 14px;background:var(--surface-2);border-radius:10px;font-size:13.5px;color:var(--ink-2);margin-bottom:16px">${esc(u.bio)}</div>`:'<div style="padding:12px 14px;background:var(--surface-2);border-radius:10px;font-size:13px;color:var(--ink-3);margin-bottom:16px">这个人很懒，还没有写简介。</div>'}
+    <div style="display:flex;gap:24px;margin-bottom:18px">
+      <div><b style="font-size:20px">${posts.length}</b><span style="font-size:12px;color:var(--ink-3);display:block">帖子</span></div>
+      <div><b style="font-size:20px">${comments}</b><span style="font-size:12px;color:var(--ink-3);display:block">评论</span></div>
+      <div><b style="font-size:20px">${DB.posts.reduce((s,p)=>s+(p.likedBy.includes(uid)?1:0),0)}</b><span style="font-size:12px;color:var(--ink-3);display:block">收到的赞</span></div>
+    </div>
+    <div style="font-size:13px;font-weight:600;color:var(--ink-2);margin-bottom:8px">TA 的帖子</div>
+    ${posts.length?posts.slice(0,5).map(p=>`<div style="padding:10px 12px;border:1px solid var(--line);border-radius:9px;margin-bottom:8px;cursor:pointer" onclick="closeModal('profile-modal');openDetail('${p.id}')">
+      <div style="font-size:14px;font-weight:600">${esc(p.title)}</div>
+      <div style="font-size:12px;color:var(--ink-3);margin-top:3px">${esc(p.category)} · ${fmtTime(p.createdAt)} · ${p.comments.length} 评论</div>
+    </div>`).join(''):'<div style="font-size:13px;color:var(--ink-3);padding:10px 0">还没有发布帖子。</div>'}
+  `;
+  openModal('profile-modal');
+}
 function renderBoard(){
   renderCats();
   let list=visiblePosts();
@@ -829,13 +874,13 @@ function renderBoard(){
   el.innerHTML=list.map(p=>{
     const n=dispName(p.authorId);
     return `<article class="post-card" onclick="openDetail('${p.id}')">
-      ${avatarHTML(n)}
+      <span onclick="event.stopPropagation();openProfile('${p.authorId}')" style="cursor:pointer">${avatarHTML(n)}</span>
       <div class="post-main">
         <div class="post-head">
           <span class="badge badge-cat">${esc(p.category)}</span>
           ${p.hidden?'<span class="badge badge-off">已屏蔽</span>':''}
           ${p.category==='公告'&&!p.hidden?'<span class="pin-tag"><svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor"><path d="M7 14l-1 6 6-3 6 3-1-6H7z"/><path d="M12 2a6 6 0 0 1 6 6c0 3-2 5-4 6h-4c-2-1-4-3-4-6a6 6 0 0 1 6-6z"/></svg>置顶</span>':''}
-          <span style="font-weight:600;font-size:13.5px;color:var(--ink-2)">${esc(n)}</span>
+          <span style="font-weight:600;font-size:13.5px;color:var(--ink-2);cursor:pointer" onclick="event.stopPropagation();openProfile('${p.authorId}')">${esc(n)}</span>
           <span class="meta"><span class="dot"></span>${fmtTime(p.createdAt)}</span>
         </div>
         <h3 class="post-title" ${p.hidden?'style="color:var(--ink-3)"':''}>${esc(p.title)}</h3>
@@ -876,9 +921,9 @@ function renderDetail(){
         </div>
         <h1 class="detail-title" ${p.hidden?'style="color:var(--ink-3)"':''}>${esc(p.title)}</h1>
         <div class="detail-author">
-          ${avatarHTML(a,'lg')}
+          <span onclick="openProfile('${p.authorId}')" style="cursor:pointer;display:inline-flex">${avatarHTML(a,'lg')}</span>
           <div>
-            <div style="display:flex;align-items:center;gap:8px"><span class="nm">${esc(a)}</span>${badgeRole(DB.users.find(x=>x.id===p.authorId)||{role:'user'})}</div>
+            <div style="display:flex;align-items:center;gap:8px"><span class="nm" style="cursor:pointer" onclick="openProfile('${p.authorId}')">${esc(a)}</span>${badgeRole(DB.users.find(x=>x.id===p.authorId)||{role:'user'})}</div>
             <div class="at meta">发布于 ${fmtFull(p.createdAt)}<span class="dot"></span>${p.views} 次浏览</div>
           </div>
         </div>
@@ -904,10 +949,10 @@ function renderDetail(){
             const cn=dispName(c.authorId);
             const cDel=isAdmin()||(SESSION&&SESSION.id===c.authorId);
             return `<div class="comment">
-              ${avatarHTML(cn)}
+              <span onclick="openProfile('${c.authorId}')" style="cursor:pointer;display:inline-flex">${avatarHTML(cn)}</span>
               <div class="comment-main" ${c.hidden?'style="background:var(--surface-2);opacity:.65"':''}>
                 <div class="comment-top">
-                  <span class="nm">${esc(cn)}</span>${badgeRole(DB.users.find(x=>x.id===c.authorId)||{role:'user'})}
+                  <span class="nm" style="cursor:pointer" onclick="openProfile('${c.authorId}')">${esc(cn)}</span>${badgeRole(DB.users.find(x=>x.id===c.authorId)||{role:'user'})}
                   ${c.hidden?'<span class="badge badge-off">已屏蔽</span>':''}
                   <span class="comment-time">${fmtTime(c.createdAt)} · ${fmtFull(c.createdAt)}</span>
                 </div>
