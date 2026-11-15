@@ -170,6 +170,37 @@ td .ops{display:flex;gap:6px;flex-wrap:wrap}
 .notice-line{display:flex;align-items:center;justify-content:space-between;gap:10px;
   padding:9px 0;border-bottom:1px dashed var(--line);font-size:13px;flex-wrap:wrap}
 .notice-line:last-child{border-bottom:none}
+/* ============ 工作台实时时钟 ============ */
+.clock-card{background:linear-gradient(135deg,#1e3a8a,#2d55b8);color:#fff;border-radius:var(--radius);
+  padding:16px 20px;margin-bottom:18px;display:flex;align-items:center;justify-content:space-between;
+  gap:14px;flex-wrap:wrap;box-shadow:var(--shadow)}
+.clock-card .c-left{display:flex;flex-direction:column;gap:2px}
+.clock-card .c-time{font-size:30px;font-weight:800;letter-spacing:2px;line-height:1.2;font-variant-numeric:tabular-nums}
+.clock-card .c-date{font-size:13px;opacity:.9}
+.clock-card .c-right{font-size:13px;text-align:right;line-height:1.9;opacity:.95}
+.clock-card .c-right b{font-size:16px}
+.userbox .clock-chip{display:inline-flex;flex-direction:column;align-items:flex-end;line-height:1.3;
+  background:rgba(255,255,255,.12);border-radius:7px;padding:4px 9px;font-variant-numeric:tabular-nums}
+.userbox .clock-chip b{font-size:13px}
+.userbox .clock-chip small{font-size:10px;opacity:.8}
+/* ============ 考试预告 ============ */
+.en-item{border:1px solid var(--line);border-radius:9px;padding:12px 14px;margin-bottom:10px;background:#fff}
+.en-item.upcoming{background:var(--navy-light);border-color:#c7d7f7}
+.en-item.past{opacity:.62}
+.en-head{display:flex;align-items:center;gap:9px;flex-wrap:wrap;margin-bottom:6px}
+.en-head b{font-size:15px;color:var(--navy-dark)}
+.en-meta{font-size:13px;color:var(--text);line-height:1.9}
+.en-count{font-size:12px;color:var(--navy-dark);font-weight:700;background:#fff;border:1px solid #c7d7f7;
+  padding:2px 9px;border-radius:20px}
+/* ============ 作弊记录警示 ============ */
+.cheat-alert{border:2px solid var(--danger);background:var(--danger-bg);border-radius:var(--radius);
+  padding:14px 16px;margin-bottom:16px;box-shadow:var(--shadow)}
+.cheat-alert h2{color:var(--danger);font-size:16px;display:flex;align-items:center;gap:8px;margin-bottom:8px}
+.cheat-alert .cheat-row{border-top:1px dashed #fca5a5;padding:8px 0;font-size:13px;line-height:1.8}
+.cheat-alert .cheat-row:first-of-type{border-top:none}
+.badge.cheat{background:var(--danger);color:#fff}
+.cheat-note{margin-top:10px;padding:9px 12px;background:#fff;border:1px solid var(--danger);
+  border-radius:8px;color:var(--danger);font-size:13px;font-weight:700}
 /* ============ 公告 ============ */
 .ann-item{border:1px solid var(--line);border-radius:9px;padding:11px 13px;margin-bottom:10px;background:#fff}
 .ann-item.force{background:var(--warn-bg);border-color:#fde68a}
@@ -240,7 +271,9 @@ pre.log{background:var(--gray);border:1px solid var(--line);border-radius:8px;pa
    功能：年级与班级（支持按编号范围批量新增）、选科组合、选科年级排名与榜首姓名、分科满分、评语、
          公告（可设强制展示）、消息通知、学生职称与奖项、单科班级前十/年级前五十、
          成绩查看申请与班主任审批、学生端仅显示本人选科科目、班级管理人员查看、
-         批量删除学生账号、管理人员联系方式与自定义信息、管理主页多维数据卡片
+         批量删除学生账号、管理人员联系方式与自定义信息、管理主页多维数据卡片、
+         工作台实时时间与日期、考试预告（管理员发布批次与时间）、
+         作弊记录（管理员认定 / 班主任反馈 / 年级主任接收 / 学生端醒目标注）
    代码分区：① 存储与常量 ② 通用工具 ③ 业务计算与权限 ④ 路由与框架
              ⑤ 页面渲染 ⑥ 批量导入 ⑦ 图表 ⑧ 启动与数据迁移
    ===================================================================== */
@@ -265,6 +298,8 @@ const DB={
   annRead:       LS.get('annRead',{}),      // { '用户id|公告id': 公告updatedAt } 强制公告已读记录
   messages:      LS.get('messages',[]),     // [{id,senderId,senderName,senderTitle,title,content,recipients,readBy,createdAt}]
   gradeRequests: LS.get('gradeRequests',[]),// 成绩查看申请 [{id,studentId,targetId,reason,status,createdAt,reviewedBy,reviewedAt,reply}]
+  examNotices:   LS.get('examNotices',[]),  // 考试预告 [{id,exam,date,startTime,endTime,subjects,content,authorName,createdAt,updatedAt}]
+  cheating:      LS.get('cheating',[]),     // 作弊记录 [{id,studentId,exam,date,reason,source,status,reporterId,reporterName,reporterTitle,receivedBy,receivedName,receivedAt,createdAt}]
   settings:      LS.get('settings',{})      // {headOtherComboFirst:是否允许班主任查看其它选科榜首}
 };
 let session=LS.get('session',null);    // {role,title,username,id,name,classId,grade}
@@ -284,6 +319,7 @@ const STAFF_TITLES=['班主任','年级主任','教务处主任','学校领导']
 const ROLE_NAME={admin:'管理员',leader:'学校领导',head:'班主任',student:'学生'};
 const UNCLASSIFIED='未分班', NO_GRADE='未分组年级';
 let chartInst=null;
+let clockTimer=null;             // 工作台实时时钟定时器（切换页面时重建）
 let scoreFilter={classId:'',exam:''};
 
 function save(k){ LS.set(k,DB[k]); }
@@ -348,7 +384,7 @@ function downloadJSON(filename,data){
   document.body.appendChild(a);a.click();a.remove();
   setTimeout(()=>URL.revokeObjectURL(url),1500);
 }
-function mount(html){ $('app').innerHTML=html; }
+function mount(html){ $('app').innerHTML=html; startClock(); }
 function setHash(h){ if(location.hash===h) route(); else location.hash=h; }
 function fmtNum(n){ return Number.isInteger(n)?String(n):n.toFixed(1); }
 function maxOf(sub){ return MAX_SCORE[sub]||150; }
@@ -822,6 +858,160 @@ function canViewPeer(applicantId,targetId){
     q.status==='approved');
 }
 
+/* ================= ⑤ 工作台时钟 / 考试预告 / 作弊记录 ================= */
+/* ---------- 实时时间与日期（所有角色工作台 + 导航栏，每秒刷新） ---------- */
+const WEEK_CN=['星期日','星期一','星期二','星期三','星期四','星期五','星期六'];
+function fmtClockTime(d){
+  const p=n=>String(n).padStart(2,'0');
+  return p(d.getHours())+':'+p(d.getMinutes())+':'+p(d.getSeconds());
+}
+function fmtClockDate(d){
+  return d.getFullYear()+'年'+(d.getMonth()+1)+'月'+d.getDate()+'日 '+WEEK_CN[d.getDay()];
+}
+/** 工作台时钟卡片：大号时间 + 完整日期星期 + 下一场考试倒计时 */
+function clockCardHtml(){
+  return '<div class="clock-card"><div class="c-left">'+
+    '<div class="c-time" data-clock-time>--:--:--</div>'+
+    '<div class="c-date" data-clock-date>--</div></div>'+
+    '<div class="c-right" data-clock-extra></div></div>';
+}
+/** 挂载后启动定时器：统一刷新导航栏小钟与工作台大钟；切换页面时先清旧定时器 */
+function startClock(){
+  if(clockTimer) clearInterval(clockTimer);
+  const tick=()=>{
+    const d=new Date(),t=fmtClockTime(d),dt=fmtClockDate(d);
+    document.querySelectorAll('[data-clock-time]').forEach(e=>e.textContent=t);
+    document.querySelectorAll('[data-clock-date]').forEach(e=>e.textContent=dt);
+    const nx=nextExamNotice();
+    const extra=nx
+      ? '📅 下一场考试：<b>'+esc(nx.exam)+'</b><br>'+esc(nx.date)+' '+esc(nx.startTime||'')+' · '+esc(examCountdownText(nx))
+      : '📅 暂无考试预告';
+    document.querySelectorAll('[data-clock-extra]').forEach(e=>e.innerHTML=extra);
+  };
+  tick();
+  clockTimer=setInterval(tick,1000);
+}
+
+/* ---------- 考试预告：管理员发布考试批次及时间，全员可查看 ---------- */
+function sortedExamNotices(){
+  return DB.examNotices.slice().sort((a,b)=>
+    (a.date||'').localeCompare(b.date||'')||(a.startTime||'').localeCompare(b.startTime||'')||a.createdAt-b.createdAt);
+}
+function examNoticeEnd(n){
+  return new Date((n.date||'')+'T'+(n.endTime||n.startTime||'23:59')+':00');
+}
+function examCountdownText(n){
+  const now=new Date();
+  const start=new Date((n.date||'')+'T'+(n.startTime||'00:00')+':00');
+  if(start>now) return '还有 '+Math.ceil((start-now)/86400000)+' 天';
+  return examNoticeEnd(n)>now?'考试进行中':'已结束';
+}
+/** 下一场尚未结束的考试预告；无则返回 null */
+function nextExamNotice(){
+  const now=new Date();
+  return sortedExamNotices().find(n=>examNoticeEnd(n)>=now)||null;
+}
+function examNoticeItemHtml(n){
+  const past=examNoticeEnd(n)<new Date();
+  const upcoming=!past;
+  return '<div class="en-item '+(past?'past':'upcoming')+'">'+
+    '<div class="en-head"><b>'+esc(n.exam)+'</b>'+
+      (past?'<span class="badge soft">已结束</span>':'<span class="badge admin">即将开考</span>')+
+      '<span class="en-count">'+esc(examCountdownText(n))+'</span>'+
+      '<span class="hint">'+esc(n.authorName||'管理员')+' · '+esc(new Date(n.createdAt).toLocaleString())+'</span></div>'+
+    '<div class="en-meta">📅 '+esc(n.date)+' ｜ 🕐 '+esc(n.startTime||'待定')+
+      (n.endTime?' ~ '+esc(n.endTime):'')+
+      (n.subjects?'<br>📚 科目：'+esc(n.subjects):'')+
+      (n.content?'<br>📝 '+esc(n.content).replace(/\n/g,'<br>'):'')+'</div></div>';
+}
+/** 首页只读展示块：默认展示最近 3 场未结束考试；无预告时返回空 */
+function examNoticeHtml(limit){
+  const list=sortedExamNotices();
+  if(!list.length) return '';
+  const upcoming=list.filter(n=>examNoticeEnd(n)>=new Date());
+  const shown=limit?(upcoming.length?upcoming.slice(0,limit):list.slice(-limit)):list;
+  return '<div class="card"><h2>🗓 考试预告 <span class="tag">共 '+list.length+' 场</span></h2>'+
+    shown.map(examNoticeItemHtml).join('')+
+    (upcoming.length>limit?'<p class="hint">仅显示最近 '+limit+' 场，<a href="#/exam-notices">查看全部 →</a></p>':'')+
+    '</div>';
+}
+/** 发布 / 编辑考试预告的表单（管理员专用） */
+function examNoticeFormHtml(n){
+  n=n||{};
+  const examOpts=allExams().map(e=>'<option value="'+esc(e)+'"></option>').join('');
+  return '<div class="grid g2">'+
+      '<div class="field"><label>考试名称 / 批次</label><input id="en-exam" list="en-exam-list" value="'+esc(n.exam||'')+'" placeholder="如 高一上学期期中考试">'+
+        '<datalist id="en-exam-list">'+examOpts+'</datalist></div>'+
+      '<div class="field"><label>考试日期</label><input id="en-date" type="date" value="'+esc(n.date||today())+'"></div>'+
+      '<div class="field"><label>开始时间</label><input id="en-start" type="time" value="'+esc(n.startTime||'08:00')+'"></div>'+
+      '<div class="field"><label>结束时间（可留空）</label><input id="en-end" type="time" value="'+esc(n.endTime||'')+'"></div>'+
+      '<div class="field"><label>考试科目（可留空）</label><input id="en-subjects" value="'+esc(n.subjects||'')+'" placeholder="如 语数英 + 选考科目"></div>'+
+      '<div class="field"><label>备注说明（可留空）</label><input id="en-content" value="'+esc(n.content||'')+'" placeholder="如 考场安排、携带文具"></div>'+
+    '</div><div class="err" id="en-err"></div>';
+}
+/** 读取并校验预告表单，返回 {ok,data,msg} */
+function readExamNoticeForm(root){
+  const q=s=>{ const e=root.querySelector(s); return e?String(e.value).trim():''; };
+  const exam=q('#en-exam'),date=q('#en-date'),startTime=q('#en-start'),endTime=q('#en-end');
+  const subjects=q('#en-subjects'),content=q('#en-content');
+  if(!exam) return {ok:false,msg:'请输入考试名称 / 批次'};
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(date)) return {ok:false,msg:'请选择考试日期'};
+  if(startTime&&!/^\d{2}:\d{2}$/.test(startTime)) return {ok:false,msg:'开始时间格式不正确'};
+  if(endTime&&!/^\d{2}:\d{2}$/.test(endTime)) return {ok:false,msg:'结束时间格式不正确'};
+  if(startTime&&endTime&&endTime<=startTime) return {ok:false,msg:'结束时间需晚于开始时间'};
+  return {ok:true,data:{exam,date,startTime,endTime,subjects,content}};
+}
+
+/* ---------- 作弊 / 违纪记录：管理员认定、班主任反馈、年级主任接收 ---------- */
+const CHEAT_STATUS={confirmed:'已确认',pending:'待接收',rejected:'已驳回'};
+/** 当前管理角色可见的作弊记录（班主任仅本班，年级主任仅本年级或全校） */
+function visibleCheating(){
+  if(session.role==='admin') return DB.cheating;
+  if(session.role==='head') return DB.cheating.filter(c=>{
+    const s=stuOf(c.studentId); return s&&!!session.classId&&classIdOf(s)===session.classId; });
+  if(session.role==='leader') return DB.cheating.filter(c=>{
+    const s=stuOf(c.studentId); return s&&(!session.grade||gradeOf(s)===session.grade); });
+  return [];
+}
+/** 某学生已确认（生效）的作弊记录；学生端只展示这些，避免未核实指控 */
+function confirmedCheating(stuId){
+  return DB.cheating.filter(c=>c.studentId===stuId&&c.status==='confirmed')
+    .sort((a,b)=>(b.date||'').localeCompare(a.date||''));
+}
+function cheatingFor(stuId,exam,date){
+  return confirmedCheating(stuId).filter(c=>c.exam===exam&&c.date===date);
+}
+function pendingCheatingCount(){
+  return visibleCheating().filter(c=>c.status==='pending').length;
+}
+function cheatSourceText(c){
+  if(c.source==='admin') return '管理员认定';
+  return '班主任反馈 · '+(c.receivedName?esc(c.receivedName)+' 接收':'待年级主任接收');
+}
+/** 学生端醒目红色警示块（已确认记录才显示） */
+function cheatAlertHtml(stuId){
+  const list=confirmedCheating(stuId);
+  if(!list.length) return '';
+  return '<div class="cheat-alert"><h2>⚠ 考试违纪 / 作弊记录（'+list.length+' 条）</h2>'+
+    list.map(c=>'<div class="cheat-row"><b>'+esc(c.exam||'考试')+' · '+esc(c.date||'')+'</b>'+
+      ' ｜ 认定方式：'+cheatSourceText(c)+
+      '<br>情况说明：'+esc(c.reason||'—')+
+      (c.reporterName?'<br>记录人：'+esc(c.reporterTitle?c.reporterTitle+' '+c.reporterName:c.reporterName):'')+
+      '</div>').join('')+
+    '<div class="cheat-note">该记录将在你的成绩档案中醒目标注；如有异议请联系班主任或年级主任核实。</div></div>';
+}
+/** 成绩表格 / 成绩卡片上的违纪标记 */
+function cheatBadgeHtml(stuId,exam,date){
+  const hit=cheatingFor(stuId,exam,date);
+  if(hit.length) return '<span class="badge cheat">⚠ 作弊 '+hit.length+'</span>';
+  const pending=DB.cheating.filter(c=>c.studentId===stuId&&c.exam===exam&&c.date===date&&c.status==='pending');
+  return pending.length?'<span class="badge gold">待接收</span>':'';
+}
+/** 接收 / 驳回权限：管理员或年级主任等领导角色，且记录为班主任反馈的待接收状态 */
+function canReceiveCheat(c){
+  return c.status==='pending'&&c.source==='head'&&(session.role==='admin'||session.role==='leader');
+}
+
 /* ---------- ④ 路由与框架 ---------- */
 const ROUTES={
   '#/login':            {auth:null,                       render:renderLogin},
@@ -841,33 +1031,42 @@ const ROUTES={
   '#/requests':         {auth:['admin','leader','head'], render:renderRequests,     crumb:'首页 / 成绩查看申请',  title:'成绩查看申请'},
   '#/org':              {auth:['admin'],                 render:renderOrg,          crumb:'首页 / 组织与人员',     title:'组织与人员'},
   '#/data':             {auth:['admin'],                 render:renderAdminData,    crumb:'首页 / 数据管理',      title:'数据管理'},
+  '#/exam-notices':     {auth:['admin','leader','head','student'],render:renderExamNotices,crumb:'首页 / 考试预告',  title:'考试预告'},
+  '#/cheating':         {auth:['admin','leader','head'], render:renderCheating,    crumb:'首页 / 作弊违纪记录',  title:'作弊违纪记录'},
   '#/student':          {auth:['student'],               render:renderStudentHome,  crumb:'首页 / 我的成绩',      title:'我的成绩'},
   '#/student/trend':    {auth:['student'],               render:renderStudentTrend, crumb:'首页 / 总分趋势',      title:'总分趋势'},
   '#/student/comments': {auth:['student'],               render:renderStudentComments,crumb:'首页 / 我的评语',     title:'我的评语'},
   '#/messages':         {auth:['student'],               render:renderStudentMessages,crumb:'首页 / 消息通知',     title:'消息通知'},
   '#/student/honors':   {auth:['student'],               render:renderStudentHonors,crumb:'首页 / 我的职称奖项',  title:'我的职称奖项'},
-  '#/student/requests': {auth:['student'],               render:renderStudentRequests,crumb:'首页 / 成绩查看申请',title:'成绩查看申请'}
+  '#/student/requests': {auth:['student'],               render:renderStudentRequests,crumb:'首页 / 成绩查看申请',title:'成绩查看申请'},
+  '#/student/cheating': {auth:['student'],               render:renderStudentCheating,crumb:'首页 / 我的违纪记录',title:'我的违纪记录'}
 };
 function navItems(role){
   const sets={
     admin:[['#/admin','总览'],['#/students','学生账号'],['#/scores','成绩管理'],['#/stats','统计分析'],
            ['#/ranking','选科排名'],['#/subject-top','单科榜单'],['#/comments','评语管理'],
-           ['#/announcements','公告管理'],['#/message-send','发送消息'],['#/honors','职称奖项'],
+           ['#/announcements','公告管理'],['#/exam-notices','考试预告'],['#/cheating','作弊记录'],
+           ['#/message-send','发送消息'],['#/honors','职称奖项'],
            ['#/requests','查看申请'],['#/org','组织与人员'],['#/data','数据管理']],
     leader:[['#/leader','总览'],['#/scores','成绩查看'],['#/stats','统计分析'],['#/ranking','选科排名'],
             ['#/subject-top','单科榜单'],['#/comments','评语管理'],['#/announcements','公告查看'],
+            ['#/exam-notices','考试预告'],['#/cheating','作弊反馈'],
             ['#/message-send','发送消息'],['#/honors','职称奖项'],['#/requests','查看申请']],
     head:[['#/head','总览'],['#/head/report','班级成绩单'],['#/students','本班学生'],['#/scores','本班成绩'],
           ['#/stats','统计分析'],['#/ranking','选科排名'],['#/subject-top','单科榜单'],
-          ['#/comments','评语管理'],['#/announcements','公告查看'],['#/message-send','发送消息'],
+          ['#/comments','评语管理'],['#/announcements','公告查看'],['#/exam-notices','考试预告'],
+          ['#/cheating','作弊反馈'],['#/message-send','发送消息'],
           ['#/honors','职称奖项'],['#/requests','申请审批']],
     student:[['#/student','我的成绩'],['#/student/trend','总分趋势'],['#/student/comments','我的评语'],
-             ['#/messages','消息通知'],['#/student/honors','我的奖项'],['#/student/requests','成绩查看申请']]
+             ['#/messages','消息通知'],['#/student/honors','我的奖项'],['#/student/requests','成绩查看申请'],
+             ['#/exam-notices','考试预告'],['#/student/cheating','违纪记录']]
   };
   return (sets[role]||[]).map(([h,t])=>{
     const unread=(h==='#/messages')?unreadMessageCount():0;
+    const cheatN=(h==='#/student/cheating'&&session&&session.role==='student')?confirmedCheating(session.id).length:0;
     return '<a href="'+h+'" class="'+(location.hash===h?'active':'')+'">'+t+
-      (unread?' <span class="badge gold">'+unread+'</span>':'')+'</a>';
+      (unread?' <span class="badge gold">'+unread+'</span>':'')+
+      (cheatN?' <span class="badge cheat">'+cheatN+'</span>':'')+'</a>';
   }).join('');
 }
 /** 页面外壳：导航栏 + 角色标识 + 面包屑 */
@@ -879,7 +1078,8 @@ function shell(title,crumb,content,role){
   '<header class="topbar">'+
     '<div class="brand"><span class="logo">绩</span><div><strong>桂林市第三中学成绩管理系统</strong></div></div>'+
     '<nav class="nav">'+navItems(role)+'</nav>'+
-    '<div class="userbox"><span class="badge '+badgeCls+'">'+badgeTxt+'</span>'+
+    '<div class="userbox"><span class="clock-chip"><b data-clock-time>--:--:--</b><small data-clock-date>--</small></span>'+
+      '<span class="badge '+badgeCls+'">'+badgeTxt+'</span>'+
       '<span>'+esc(session?(session.name||session.username):'')+'</span>'+
       '<button class="btn ghost sm" data-act="logout">退出登录</button></div>'+
   '</header>'+
@@ -1034,12 +1234,15 @@ function renderAdminHome(){
   const unclassified=DB.students.filter(s=>!classIdOf(s)).length;
   const batches=allBatches();
   const latest=batches.length?batches[0].date:'—';
-  const content=
+  const cheatConfirmed=DB.cheating.filter(c=>c.status==='confirmed').length;
+  const cheatPending=DB.cheating.filter(c=>c.status==='pending').length;
+  const content=clockCardHtml()+
     '<div class="stat-grid">'+
       infoStat('年级数',DB.grades.length)+infoStat('班级数',DB.classes.length)+
       infoStat('学生账号',DB.students.length)+infoStat('管理人员',DB.staff.length)+
       infoStat('成绩记录',DB.scores.length)+infoStat('考试批次',batches.length)+
       infoStat('待审批申请',pending)+infoStat('职称奖项',honors)+
+      infoStat('作弊记录',cheatConfirmed)+infoStat('待接收反馈',cheatPending)+
     '</div>'+
     '<div class="card"><h2>快捷操作 <span class="tag">管理员面板</span></h2>'+
       '<div style="display:flex;gap:10px;flex-wrap:wrap">'+
@@ -1050,6 +1253,8 @@ function renderAdminHome(){
         '<a class="btn ghost" href="#/subject-top">单科榜单</a>'+
         '<a class="btn ghost" href="#/comments">撰写评语</a>'+
         '<a class="btn ghost" href="#/announcements">公告管理</a>'+
+        '<a class="btn ghost" href="#/exam-notices">发布考试预告</a>'+
+        '<a class="btn ghost" href="#/cheating">作弊记录管理</a>'+
         '<a class="btn ghost" href="#/message-send">发送消息</a>'+
         '<a class="btn ghost" href="#/honors">职称奖项</a>'+
         '<a class="btn ghost" href="#/requests">查看申请</a>'+
@@ -1059,6 +1264,7 @@ function renderAdminHome(){
       '<div class="card"><h2>待办与提醒</h2>'+
         '<div class="notice-line"><span>📝 待审批成绩查看申请</span><span><b>'+pending+'</b> 条 · <a href="#/requests">去查看</a></span></div>'+
         '<div class="notice-line"><span>📢 强制展示公告</span><span><b>'+forced+'</b> 条 · <a href="#/announcements">去管理</a></span></div>'+
+        '<div class="notice-line"><span>⚠ 待接收作弊反馈</span><span><b>'+cheatPending+'</b> 条 · <a href="#/cheating">去处理</a></span></div>'+
         '<div class="notice-line"><span>👤 未分班学生</span><span><b>'+unclassified+'</b> 人 · <a href="#/students">去处理</a></span></div>'+
         '<div class="notice-line"><span>🗓 最近考试日期</span><span><b>'+esc(latest)+'</b></span></div>'+
       '</div>'+
@@ -1075,6 +1281,7 @@ function renderAdminHome(){
     '</div>'+
     gradeDistHtml(DB.students)+
     staffDirectoryHtml()+
+    examNoticeHtml(3)+
     announcementHtml()+
     '<div class="card"><h2>最近录入成绩</h2><div class="table-scroll"><table>'+
       '<thead><tr><th>考试日期</th><th>考试名称</th><th>学生</th><th>班级</th><th>年级</th><th>选科</th><th>总分</th></tr></thead>'+
@@ -1186,12 +1393,15 @@ function renderStaffHome(){
   const batches=allBatches();
   const latest=batches.length?batches[0].date:'—';
   const forced=DB.announcements.filter(a=>a.force).length;
-  const content=
+  const cheatRows=visibleCheating();
+  const cheatConfirmed=cheatRows.filter(c=>c.status==='confirmed').length;
+  const content=clockCardHtml()+
     '<div class="stat-grid">'+
       infoStat('可见学生',mine.length)+infoStat('可见成绩',myScores.length)+
       infoStat('考试批次',batches.length)+infoStat('已写评语',myComments)+
       infoStat('待处理申请',pending)+infoStat('职称奖项',honors)+
       infoStat('已发消息',sentMsgs)+infoStat(role==='head'?'本班选科组合':'涉及班级',role==='head'?combos:classCount)+
+      infoStat('作弊记录',cheatConfirmed)+infoStat('待接收反馈',pendingCheatingCount())+
     '</div>'+
     '<div class="card"><h2>'+esc(session.title||ROLE_NAME[role])+'工作台 <span class="tag">'+esc(scopeTxt)+'</span></h2>'+
       '<div style="display:flex;gap:10px;flex-wrap:wrap">'+
@@ -1199,6 +1409,8 @@ function renderStaffHome(){
         '<a class="btn ghost" href="#/ranking">选科排名</a>'+
         '<a class="btn ghost" href="#/subject-top">单科榜单</a>'+
         '<a class="btn ghost" href="#/comments">评语管理</a>'+
+        '<a class="btn ghost" href="#/exam-notices">考试预告</a>'+
+        '<a class="btn ghost" href="#/cheating">'+(role==='head'?'反馈作弊':'接收作弊反馈')+'</a>'+
         '<a class="btn ghost" href="#/message-send">发送消息</a>'+
         '<a class="btn ghost" href="#/honors">职称奖项</a>'+
         '<a class="btn ghost" href="#/requests">'+(role==='head'?'申请审批':'查看申请')+'</a>'+
@@ -1217,6 +1429,7 @@ function renderStaffHome(){
       '<div class="card"><h2>待办与提醒</h2>'+
         '<div class="notice-line"><span>📝 待处理成绩查看申请</span><span><b>'+pending+'</b> 条 · <a href="#/requests">'+(role==='head'?'去审批':'去查看')+'</a></span></div>'+
         '<div class="notice-line"><span>📢 强制展示公告</span><span><b>'+forced+'</b> 条 · <a href="#/announcements">去查看</a></span></div>'+
+        '<div class="notice-line"><span>⚠ 待接收作弊反馈</span><span><b>'+pendingCheatingCount()+'</b> 条 · <a href="#/cheating">'+(role==='head'?'去查看':'去接收')+'</a></span></div>'+
         '<div class="notice-line"><span>🏆 '+(role==='head'?'本班':'权限内')+'职称奖项</span><span><b>'+honors+'</b> 条 · <a href="#/honors">去查看</a></span></div>'+
         '<div class="notice-line"><span>✉ 已发送消息</span><span><b>'+sentMsgs+'</b> 条 · <a href="#/message-send">继续发送</a></span></div>'+
       '</div>'+
@@ -1227,6 +1440,7 @@ function renderStaffHome(){
         infoStat('可见成绩',myScores.length)+infoStat('已写评语',myComments)+
       '</div></div></div>')+
     staffDirectoryHtml()+
+    examNoticeHtml(3)+
     (role==='head'?'<p style="margin:-6px 0 12px"><a class="btn primary" href="#/head/report">查看班级排名成绩单（本班各科第一）→</a></p>':'')+
     (role==='head'?headReportCard(true):'')+
     announcementHtml();
@@ -1638,6 +1852,7 @@ function removeStudents(ids){
   DB.students=DB.students.filter(s=>!set.has(s.id));
   DB.scores=DB.scores.filter(r=>!set.has(r.studentId));
   DB.comments=DB.comments.filter(c=>!set.has(c.studentId));
+  DB.cheating=DB.cheating.filter(c=>!set.has(c.studentId));
   DB.gradeRequests=DB.gradeRequests.filter(q=>!set.has(q.studentId)&&!set.has(q.targetId));
   DB.messages.forEach(m=>{
     m.recipients=(m.recipients||[]).filter(id=>!set.has(id));
@@ -1645,7 +1860,7 @@ function removeStudents(ids){
   });
   DB.messages=DB.messages.filter(m=>m.recipients.length);
   if(session&&session.role==='student'&&set.has(session.id)) LS.del('session');
-  save('students');save('scores');save('comments');save('messages');save('gradeRequests');
+  save('students');save('scores');save('comments');save('messages');save('gradeRequests');save('cheating');
 }
 function comboPickerHtml(){
   return '<div class="chk-line" id="combo-box">'+
@@ -1693,11 +1908,12 @@ function renderAdminStudents(){
       '<td>'+(i+1)+'</td><td>'+esc(s.username)+'</td><td>'+esc(s.name)+'</td>'+
     '<td>'+esc(classNameOf(s))+'</td><td>'+esc(gradeOf(s))+'</td><td><span class="badge soft">'+esc(comboName(s))+'</span></td>'+
     '<td class="mgr-cell"><span>班主任：</span>'+esc(mg.heads)+'<br><span>管理领导：</span>'+esc(mg.leaders)+'</td>'+
+    '<td>'+(confirmedCheating(s.id).length?'<span class="badge cheat">⚠ '+confirmedCheating(s.id).length+' 条</span>':'<span class="badge soft">无</span>')+'</td>'+
     '<td><div class="ops">'+
       '<button class="btn ghost sm" data-editstu="'+esc(s.id)+'">编辑</button>'+
       '<button class="btn ghost sm" data-pwd="'+esc(s.id)+'">修改密码</button>'+
       '<button class="btn ghost sm" style="color:var(--danger)" data-del="'+esc(s.id)+'">删除</button>'+
-    '</div></td></tr>';}).join('')||'<tr class="empty-row"><td colspan="9" class="empty">暂无学生账号，请先新增或批量导入</td></tr>';
+    '</div></td></tr>';}).join('')||'<tr class="empty-row"><td colspan="10" class="empty">暂无学生账号，请先新增或批量导入</td></tr>';
   const batchClassOpts='<option value="">按班级快速勾选…</option>'+allClassesSorted().map(c=>
     '<option value="'+esc(c.id)+'">'+esc(classLabel(c))+'</option>').join('');
   const content=
@@ -1725,7 +1941,7 @@ function renderAdminStudents(){
         '</div></div>'+
       '</div>'+
       '<div class="err" id="s-batch-err"></div>'+
-      '<div class="table-scroll"><table><thead><tr><th>选择</th><th>#</th><th>用户名</th><th>姓名</th><th>班级</th><th>年级</th><th>选科</th><th>班主任 / 管理领导</th><th>操作</th></tr></thead>'+
+      '<div class="table-scroll"><table><thead><tr><th>选择</th><th>#</th><th>用户名</th><th>姓名</th><th>班级</th><th>年级</th><th>选科</th><th>班主任 / 管理领导</th><th>违纪记录</th><th>操作</th></tr></thead>'+
       '<tbody id="studentTableBody">'+rows+'</tbody></table></div></div>';
   mount(page('学生账号管理','首页 / 学生账号管理',content));
   bindComboPicker(document);
@@ -1978,7 +2194,7 @@ function renderAdminScores(){
       '</div>'+
       '<div class="table-scroll"><table><thead><tr>'+
         '<th>日期</th><th>考试</th><th>学生</th><th>班级</th><th>年级</th><th>选科</th>'+
-        SUBJECTS.map(s=>'<th>'+s+'</th>').join('')+'<th>总分</th>'+(readOnly?'':'<th>操作</th>')+
+        SUBJECTS.map(s=>'<th>'+s+'</th>').join('')+'<th>总分</th><th>违纪标注</th>'+(readOnly?'':'<th>操作</th>')+
       '</tr></thead><tbody id="scoreTableBody"></tbody></table></div>'+
     '</div>';
   mount(page('成绩管理','首页 / 成绩管理',content));
@@ -2019,11 +2235,45 @@ function refreshScoreTable(){
       '<td>'+esc(classNameOf(s))+'</td><td>'+esc(gradeOf(s))+'</td><td>'+esc(comboName(s))+'</td>'+
       SUBJECTS.map(sub=>'<td>'+(typeof r.scores[sub]==='number'?fmtNum(r.scores[sub]):'—')+'</td>').join('')+
       '<td><b>'+fmtNum(r.total)+'</b></td>'+
+      '<td>'+(cheatBadgeHtml(s.id,r.exam,r.date)||'<span class="badge soft">正常</span>')+'</td>'+
       (readOnly?'':'<td><div class="ops"><button class="btn ghost sm" data-edit="'+esc(r.id)+'">编辑</button>'+
+        (session.role==='admin'?'<button class="btn ghost sm" style="color:var(--danger)" data-scheat="'+esc(r.id)+'">标记作弊</button>':'')+
         '<button class="btn ghost sm" style="color:var(--danger)" data-delscore="'+esc(r.id)+'">删除</button></div></td>')+'</tr>';
-  }).join('')||'<tr><td colspan="'+(readOnly?16:17)+'" class="empty">暂无成绩记录，请先录入或调整筛选条件</td></tr>';
+  }).join('')||'<tr><td colspan="'+(readOnly?17:18)+'" class="empty">暂无成绩记录，请先录入或调整筛选条件</td></tr>';
   document.querySelectorAll('[data-edit]').forEach(b=>b.onclick=()=>openEditScore(b.dataset.edit));
   document.querySelectorAll('[data-delscore]').forEach(b=>b.onclick=()=>delScore(b.dataset.delscore));
+  document.querySelectorAll('[data-scheat]').forEach(b=>b.onclick=()=>toggleScoreCheat(b.dataset.scheat));
+}
+/** 成绩表格快捷「标记作弊」：管理员认定立即生效；再次点击可取消认定 */
+async function toggleScoreCheat(recId){
+  const rec=DB.scores.find(r=>r.id===recId); if(!rec) return;
+  const mark=DB.cheating.find(c=>c.studentId===rec.studentId&&c.exam===rec.exam&&c.date===rec.date&&
+    c.source==='admin'&&c.status==='confirmed');
+  const s=stuOf(rec.studentId)||{};
+  if(mark){
+    const ok=await confirmDialog('取消作弊认定',
+      '确定取消 <b>'+esc(s.name||'学生')+'</b> 在「'+esc(rec.exam+' · '+rec.date)+'」的作弊认定吗？','确认取消');
+    if(!ok) return;
+    DB.cheating=DB.cheating.filter(c=>c.id!==mark.id);
+    save('cheating'); toast('已取消作弊认定','ok'); refreshScoreTable(); return;
+  }
+  openModal({
+    title:'认定成绩作弊 · '+(s.name||'学生'),width:520,okText:'确认标记',
+    body:'<p class="hint">考试：'+esc(rec.exam+' · '+rec.date)+' ｜ 总分：'+fmtNum(rec.total)+'</p>'+
+      '<div class="field" style="margin-top:12px"><label>情况说明（必填）</label>'+
+        '<textarea class="inp" id="sc-reason" placeholder="如：监考记录、违规情况说明"></textarea></div>'+
+      '<div class="err" id="sc-err"></div>'+
+      '<p class="hint">认定后立即生效，并在该学生账号下醒目显示。</p>',
+    onOk(root){
+      const reason=root.querySelector('#sc-reason').value.trim();
+      if(!reason){ root.querySelector('#sc-err').textContent='请填写情况说明'; return false; }
+      DB.cheating.push({id:uid(),studentId:rec.studentId,exam:rec.exam,date:rec.date,reason,
+        source:'admin',status:'confirmed',reporterId:session.id,
+        reporterName:session.name||session.username,reporterTitle:'管理员',
+        receivedBy:null,receivedName:'',receivedAt:null,createdAt:Date.now()});
+      save('cheating'); toast('已认定作弊并醒目标注','ok'); refreshScoreTable(); return true;
+    }
+  });
 }
 function openEditScore(id){
   const rec=DB.scores.find(r=>r.id===id); if(!rec)return;
@@ -2046,9 +2296,11 @@ async function delScore(id){
   const s=stuOf(rec.studentId);
   if(!canEditStudent(s)) return toast('权限不足','err');
   const ok=await confirmDialog('删除成绩',
-    '确定删除 <b>'+esc(s?s.name:'已删除学生')+'</b> 的「'+esc(rec.exam)+' · '+esc(rec.date)+'」成绩吗？<br>总分 <b>'+fmtNum(rec.total)+'</b>，删除后不可恢复。','确认删除');
+    '确定删除 <b>'+esc(s?s.name:'已删除学生')+'</b> 的「'+esc(rec.exam)+' · '+esc(rec.date)+'」成绩吗？<br>总分 <b>'+fmtNum(rec.total)+'</b>，该次考试关联的作弊记录也会一并删除，操作不可恢复。','确认删除');
   if(!ok)return;
-  DB.scores=DB.scores.filter(r=>r.id!==id); save('scores'); toast('已删除成绩','ok'); renderAdminScores();
+  DB.scores=DB.scores.filter(r=>r.id!==id);
+  DB.cheating=DB.cheating.filter(c=>!(c.studentId===rec.studentId&&c.exam===rec.exam&&c.date===rec.date));
+  save('scores');save('cheating'); toast('已删除成绩','ok'); renderAdminScores();
 }
 
 /* ----- 统计分析：单科平均分/最高分/最低分 + 班级总分排名 ----- */
@@ -2315,6 +2567,206 @@ function renderAnnouncements(){
     Object.keys(DB.annRead).forEach(k=>{ if(k.endsWith('|'+a.id))delete DB.annRead[k]; });
     save('announcements');save('annRead'); toast('已删除公告','ok'); renderAnnouncements();
   });
+}
+
+/* ----- 考试预告：管理员发布考试批次及时间，全员可查看 ----- */
+function renderExamNotices(){
+  const canManage=session.role==='admin';
+  const list=sortedExamNotices();
+  const rows=list.map(n=>{
+    const past=examNoticeEnd(n)<new Date();
+    return '<tr><td>'+esc(n.date)+'</td><td>'+esc(n.startTime||'—')+(n.endTime?' ~ '+esc(n.endTime):'')+'</td>'+
+      '<td><b>'+esc(n.exam)+'</b></td><td>'+esc(n.subjects||'—')+'</td>'+
+      '<td style="white-space:normal;min-width:180px">'+esc(n.content||'—')+'</td>'+
+      '<td>'+(past?'<span class="badge soft">已结束</span>':'<span class="badge admin">'+esc(examCountdownText(n))+'</span>')+'</td>'+
+      '<td>'+esc(n.authorName||'管理员')+'</td>'+
+      (canManage?'<td><div class="ops"><button class="btn ghost sm" data-enedit="'+esc(n.id)+'">编辑</button>'+
+        '<button class="btn ghost sm" style="color:var(--danger)" data-endel="'+esc(n.id)+'">删除</button></div></td>':'')+
+    '</tr>';
+  }).join('')||'<tr><td colspan="'+(canManage?8:7)+'" class="empty">暂无考试预告，管理员可在上方发布</td></tr>';
+  const form=canManage?
+    '<div class="card"><h2>发布考试预告 <span class="tag">考试批次 + 日期 + 时间</span></h2>'+
+      examNoticeFormHtml()+
+      '<button class="btn primary" id="en-add">发布考试预告</button>'+
+    '</div>':'';
+  const content=form+
+    '<div class="card"><h2>考试预告列表 <span class="tag">共 '+list.length+' 场'+
+      (canManage?' · 可发布 / 编辑 / 删除':' · 只读查看')+'</span></h2>'+
+      '<div class="table-scroll"><table><thead><tr><th>考试日期</th><th>时间</th><th>考试名称 / 批次</th>'+
+      '<th>科目</th><th>备注</th><th>状态</th><th>发布人</th>'+(canManage?'<th>操作</th>':'')+'</tr></thead>'+
+      '<tbody>'+rows+'</tbody></table></div></div>';
+  mount(page(canManage?'考试预告管理':'考试预告','首页 / 考试预告',content));
+  if(!canManage) return;
+
+  $('en-add').onclick=()=>{
+    const r=readExamNoticeForm(document);
+    if(!r.ok) return $('en-err').textContent=r.msg;
+    $('en-err').textContent='';
+    const now=Date.now();
+    DB.examNotices.push(Object.assign({id:uid(),authorName:session.name||session.username,
+      createdAt:now,updatedAt:now},r.data));
+    save('examNotices'); toast('考试预告已发布','ok'); renderExamNotices();
+  };
+  document.querySelectorAll('[data-enedit]').forEach(b=>b.onclick=()=>{
+    const n=DB.examNotices.find(x=>x.id===b.dataset.enedit); if(!n)return;
+    openModal({
+      title:'编辑考试预告 · '+n.exam,width:600,okText:'保存修改',
+      body:examNoticeFormHtml(n),
+      onOk(root){
+        const r=readExamNoticeForm(root);
+        if(!r.ok){ root.querySelector('#en-err').textContent=r.msg; return false; }
+        Object.assign(n,r.data,{updatedAt:Date.now()});
+        save('examNotices'); toast('考试预告已更新','ok'); renderExamNotices(); return true;
+      }
+    });
+  });
+  document.querySelectorAll('[data-endel]').forEach(b=>b.onclick=async()=>{
+    const n=DB.examNotices.find(x=>x.id===b.dataset.endel); if(!n)return;
+    const ok=await confirmDialog('删除考试预告',
+      '确定删除 <b>'+esc(n.exam)+'（'+esc(n.date)+'）</b> 的考试预告吗？操作不可恢复。','确认删除');
+    if(!ok)return;
+    DB.examNotices=DB.examNotices.filter(x=>x.id!==n.id);
+    save('examNotices'); toast('已删除考试预告','ok'); renderExamNotices();
+  });
+}
+
+/* ----- 作弊 / 违纪记录：管理员认定、班主任反馈、年级主任接收 ----- */
+function renderCheating(){
+  const canAdd=session.role==='admin'||session.role==='head';
+  const canDelete=session.role==='admin';
+  const stuOpts=visibleStudents().map(s=>'<option value="'+esc(s.id)+'">'+
+    esc(s.name+'（'+s.username+' · '+classNameOf(s)+'）')+'</option>').join('');
+  const batchOpts='<option value="">自定义考试名称与日期…</option>'+allBatches().map(b=>
+    '<option value="'+esc(b.exam+'|'+b.date)+'">'+esc(b.exam+' · '+b.date)+'</option>').join('');
+  const form=canAdd?
+    '<div class="card"><h2>'+(session.role==='admin'?'认定学生成绩作弊':'反馈本班作弊行为')+
+      ' <span class="tag">'+(session.role==='admin'?'记录立即生效并醒目标注':'提交后需年级主任接收确认')+'</span></h2>'+
+      '<div class="grid g3">'+
+        '<div class="field"><label>学生</label><select id="ch-stu">'+
+          (stuOpts||'<option value="">暂无可见学生</option>')+'</select></div>'+
+        '<div class="field"><label>关联考试批次（可选）</label><select id="ch-batch">'+batchOpts+'</select></div>'+
+        '<div class="field"><label>考试名称</label><input id="ch-exam" placeholder="如 高一上期中考试"></div>'+
+        '<div class="field"><label>考试日期</label><input id="ch-date" type="date" value="'+today()+'"></div>'+
+      '</div>'+
+      '<div class="field" style="margin-top:12px"><label>情况说明（必填）</label>'+
+        '<textarea class="inp" id="ch-reason" placeholder="如：夹带资料、交头接耳，监考记录编号……"></textarea></div>'+
+      '<div class="err" id="ch-err"></div>'+
+      '<button class="btn primary" id="ch-add">'+(session.role==='admin'?'标记作弊并生效':'提交作弊反馈')+'</button>'+
+    '</div>':'';
+  const list=visibleCheating().slice().sort((a,b)=>
+    (a.status==='pending'?0:1)-(b.status==='pending'?0:1)||(b.date||'').localeCompare(a.date||''));
+  const rows=list.map(c=>{
+    const s=stuOf(c.studentId)||{};
+    const statusBadge=c.status==='confirmed'?'<span class="badge cheat">⚠ 已确认</span>':
+      c.status==='pending'?'<span class="badge gold">待接收</span>':'<span class="badge soft">已驳回</span>';
+    const ops=[];
+    if(canReceiveCheat(c)){
+      ops.push('<button class="btn primary sm" data-chreceive="'+esc(c.id)+'">接收确认</button>');
+      ops.push('<button class="btn ghost sm" data-chreject="'+esc(c.id)+'">驳回</button>');
+    }
+    if(session.role==='head'&&c.source==='head'&&c.status==='pending'&&c.reporterId===session.id)
+      ops.push('<button class="btn ghost sm" data-chwithdraw="'+esc(c.id)+'">撤回反馈</button>');
+    if(canDelete) ops.push('<button class="btn ghost sm" style="color:var(--danger)" data-chdel="'+esc(c.id)+'">删除</button>');
+    return '<tr><td><b>'+esc(s.name||'已删除学生')+'</b></td><td>'+esc(classNameOf(s))+'</td>'+
+      '<td>'+esc(c.exam||'考试')+'</td><td>'+esc(c.date||'')+'</td>'+
+      '<td>'+esc(c.source==='admin'?'管理员认定':'班主任反馈')+'</td><td>'+statusBadge+'</td>'+
+      '<td style="white-space:normal;min-width:180px">'+esc(c.reason||'—')+'</td>'+
+      '<td>'+esc((c.reporterTitle?c.reporterTitle+' ':'')+(c.reporterName||'—'))+'</td>'+
+      '<td>'+esc(c.receivedName||'—')+'</td>'+
+      '<td><div class="ops">'+(ops.length?ops.join(''):'—')+'</div></td></tr>';
+  }).join('')||'<tr><td colspan="10" class="empty">暂无作弊 / 违纪记录</td></tr>';
+  const content=form+
+    '<div class="card"><h2>作弊 / 违纪记录 <span class="tag">共 '+list.length+' 条'+
+      (pendingCheatingCount()?' · 待接收 '+pendingCheatingCount()+' 条':'')+'</span></h2>'+
+      '<p class="hint" style="margin-bottom:10px">管理员可直接认定并生效；班主任反馈后需年级主任 / 教务处主任接收确认；'+
+        '只有已确认的记录才会在学生账号下醒目显示。班主任只能反馈本班，年级主任只能接收本年级权限内的反馈。</p>'+
+      '<div class="table-scroll"><table><thead><tr><th>学生</th><th>班级</th><th>考试</th><th>日期</th>'+
+      '<th>来源</th><th>状态</th><th>情况说明</th><th>记录人</th><th>接收人</th><th>操作</th></tr></thead>'+
+      '<tbody>'+rows+'</tbody></table></div></div>';
+  mount(page('作弊违纪记录','首页 / 作弊违纪记录',content));
+
+  if(canAdd){
+    $('ch-batch').onchange=e=>{
+      const v=e.target.value;
+      if(!v)return;
+      const [exam,date]=v.split('|');
+      $('ch-exam').value=exam; $('ch-date').value=date;
+    };
+    $('ch-add').onclick=()=>{
+      const sid=val('ch-stu'),exam=val('ch-exam'),date=val('ch-date'),reason=$('ch-reason').value.trim();
+      if(!sid) return $('ch-err').textContent='请选择学生';
+      if(!exam) return $('ch-err').textContent='请填写考试名称或选择考试批次';
+      if(!/^\d{4}-\d{2}-\d{2}$/.test(date)) return $('ch-err').textContent='请选择考试日期';
+      if(!reason) return $('ch-err').textContent='请填写情况说明';
+      const s=stuOf(sid);
+      if(!s||!visibleStudents().some(x=>x.id===sid)) return $('ch-err').textContent='权限不足：只能操作本班 / 权限内学生';
+      $('ch-err').textContent='';
+      const isAdmin=session.role==='admin';
+      DB.cheating.push({id:uid(),studentId:sid,exam,date,reason,
+        source:isAdmin?'admin':'head',status:isAdmin?'confirmed':'pending',
+        reporterId:session.id,reporterName:session.name||session.username,
+        reporterTitle:isAdmin?'管理员':(session.title||'班主任'),
+        receivedBy:null,receivedName:'',receivedAt:null,createdAt:Date.now()});
+      save('cheating');
+      toast(isAdmin?'已认定作弊，学生账号下将醒目标注':'作弊反馈已提交，等待年级主任接收','ok');
+      renderCheating();
+    };
+  }
+  document.querySelectorAll('[data-chreceive]').forEach(b=>b.onclick=async()=>{
+    const c=DB.cheating.find(x=>x.id===b.dataset.chreceive); if(!c||!canReceiveCheat(c))return;
+    const s=stuOf(c.studentId)||{};
+    const ok=await confirmDialog('接收作弊反馈',
+      '确认接收 <b>'+esc(s.name||'学生')+'</b> 在「'+esc(c.exam+' · '+c.date)+'」的作弊反馈吗？<br>'+
+      '接收后该记录<b>立即生效</b>，并会在学生账号下醒目标注。','确认接收');
+    if(!ok)return;
+    c.status='confirmed'; c.receivedBy=session.id;
+    c.receivedName=(session.title||ROLE_NAME[session.role]||'管理人员')+' '+(session.name||session.username);
+    c.receivedAt=Date.now();
+    save('cheating'); toast('已接收并确认作弊记录','ok'); renderCheating();
+  });
+  document.querySelectorAll('[data-chreject]').forEach(b=>b.onclick=async()=>{
+    const c=DB.cheating.find(x=>x.id===b.dataset.chreject); if(!c||!canReceiveCheat(c))return;
+    const ok=await confirmDialog('驳回作弊反馈',
+      '确定驳回该条班主任作弊反馈吗？驳回后不会在学生账号下显示。','确认驳回');
+    if(!ok)return;
+    c.status='rejected'; c.receivedBy=session.id;
+    c.receivedName=(session.title||ROLE_NAME[session.role]||'管理人员')+' '+(session.name||session.username);
+    c.receivedAt=Date.now();
+    save('cheating'); toast('已驳回作弊反馈','ok'); renderCheating();
+  });
+  document.querySelectorAll('[data-chwithdraw]').forEach(b=>b.onclick=async()=>{
+    const c=DB.cheating.find(x=>x.id===b.dataset.chwithdraw); if(!c)return;
+    const ok=await confirmDialog('撤回反馈','确定撤回本条作弊反馈吗？','确认撤回');
+    if(!ok)return;
+    DB.cheating=DB.cheating.filter(x=>x.id!==c.id);
+    save('cheating'); toast('已撤回反馈','ok'); renderCheating();
+  });
+  document.querySelectorAll('[data-chdel]').forEach(b=>b.onclick=async()=>{
+    const c=DB.cheating.find(x=>x.id===b.dataset.chdel); if(!c)return;
+    const ok=await confirmDialog('删除作弊记录',
+      '确定删除该条记录吗？删除后学生账号下的醒目标注也会消失。','确认删除');
+    if(!ok)return;
+    DB.cheating=DB.cheating.filter(x=>x.id!==c.id);
+    save('cheating'); toast('已删除作弊记录','ok'); renderCheating();
+  });
+}
+
+/* ----- 学生端：我的违纪记录（只读，仅已确认） ----- */
+function renderStudentCheating(){
+  const list=confirmedCheating(session.id);
+  const mine=DB.scores.filter(r=>r.studentId===session.id)
+    .sort((a,b)=>b.date.localeCompare(a.date));
+  const examRows=mine.map(r=>'<tr><td>'+esc(r.date)+'</td><td>'+esc(r.exam)+'</td>'+
+    '<td>'+fmtNum(r.total)+'</td><td>'+(cheatBadgeHtml(session.id,r.exam,r.date)||'<span class="badge soft">正常</span>')+'</td></tr>')
+    .join('')||'<tr><td colspan="4" class="empty">暂无成绩记录</td></tr>';
+  const content=cheatAlertHtml(session.id)||
+    '<div class="card"><div class="empty">暂无考试违纪 / 作弊记录 ✅</div></div>';
+  mount(page('我的违纪记录','首页 / 我的违纪记录',content+
+    '<div class="card"><h2>各次考试标注情况</h2><div class="table-scroll"><table>'+
+    '<thead><tr><th>日期</th><th>考试</th><th>总分</th><th>违纪标注</th></tr></thead>'+
+    '<tbody>'+examRows+'</tbody></table></div></div>'+
+    '<div class="card"><h2>说明</h2><p class="hint">仅显示经管理员认定或年级主任接收确认的作弊记录；'+
+    '班主任提交的反馈在确认前不会显示。如有异议请联系班主任或年级主任核实。</p></div>'));
 }
 
 /* ================= 新增模块：消息通知 / 职称奖项 / 单科榜单 / 成绩查看申请 ================= */
@@ -2634,7 +3086,7 @@ function renderAdminData(){
         '<button class="btn ghost" id="d-all">导出完整备份（含组织 / 人员 / 评语 / 公告 / 消息 / 申请 / 设置）</button>'+
       '</div></div>'+
     '<div class="card"><h2 style="color:var(--danger)">危险操作</h2>'+
-      '<p class="hint">一键清空将删除 <b>全部学生账号、成绩、评语、公告、消息、查看申请、年级班级与管理人员账号</b>，并退出登录；管理员账号与权限设置保留。此操作不可恢复，请先导出备份。</p>'+
+      '<p class="hint">一键清空将删除 <b>全部学生账号、成绩、评语、公告、考试预告、作弊记录、消息、查看申请、年级班级与管理人员账号</b>，并退出登录；管理员账号与权限设置保留。此操作不可恢复，请先导出备份。</p>'+
       '<div style="margin-top:14px"><button class="btn danger" id="d-clear">一键清空本地数据</button></div>'+
     '</div>'+
     '<div class="card"><h2>当前存储概览</h2>'+
@@ -2644,14 +3096,15 @@ function renderAdminData(){
         '<div class="stat"><div class="k">学生 / 管理人员</div><div class="v">'+DB.students.length+' / '+DB.staff.length+'</div></div>'+
         '<div class="stat"><div class="k">成绩 / 评语 / 公告</div><div class="v">'+DB.scores.length+' / '+DB.comments.length+' / '+DB.announcements.length+'</div></div>'+
         '<div class="stat"><div class="k">消息 / 查看申请</div><div class="v">'+DB.messages.length+' / '+DB.gradeRequests.length+'</div></div>'+
+        '<div class="stat"><div class="k">考试预告 / 作弊记录</div><div class="v">'+DB.examNotices.length+' / '+DB.cheating.length+'</div></div>'+
       '</div></div>';
   mount(page('数据管理','首页 / 数据管理',content));
   $('d-scores').onclick=()=>{ downloadJSON('成绩备份.json',{type:'scores',exportedAt:new Date().toLocaleString(),data:DB.scores}); toast('已导出成绩备份','ok'); };
   $('d-students').onclick=()=>{ downloadJSON('学生账号备份.json',{type:'students',exportedAt:new Date().toLocaleString(),grades:DB.grades,classes:DB.classes,data:DB.students}); toast('已导出学生账号备份','ok'); };
-  $('d-all').onclick=()=>{ downloadJSON('完整备份.json',{type:'all',exportedAt:new Date().toLocaleString(),admin:DB.admin,staff:DB.staff,grades:DB.grades,classes:DB.classes,students:DB.students,scores:DB.scores,comments:DB.comments,announcements:DB.announcements,messages:DB.messages,gradeRequests:DB.gradeRequests,settings:DB.settings}); toast('已导出完整备份','ok'); };
+  $('d-all').onclick=()=>{ downloadJSON('完整备份.json',{type:'all',exportedAt:new Date().toLocaleString(),admin:DB.admin,staff:DB.staff,grades:DB.grades,classes:DB.classes,students:DB.students,scores:DB.scores,comments:DB.comments,announcements:DB.announcements,messages:DB.messages,gradeRequests:DB.gradeRequests,examNotices:DB.examNotices,cheating:DB.cheating,settings:DB.settings}); toast('已导出完整备份','ok'); };
   $('d-clear').onclick=async()=>{
     const ok1=await confirmDialog('第 1 次确认 · 清空数据',
-      '将删除 <b>'+DB.students.length+'</b> 个学生账号、<b>'+DB.scores.length+'</b> 条成绩、<b>'+DB.comments.length+'</b> 条评语、<b>'+DB.announcements.length+'</b> 条公告、<b>'+DB.messages.length+'</b> 条消息、<b>'+DB.gradeRequests.length+'</b> 条申请及全部年级班级与管理人员账号，并退出登录。<br>该操作<b>不可恢复</b>，是否已导出备份？','我已备份，继续');
+      '将删除 <b>'+DB.students.length+'</b> 个学生账号、<b>'+DB.scores.length+'</b> 条成绩、<b>'+DB.comments.length+'</b> 条评语、<b>'+DB.announcements.length+'</b> 条公告、<b>'+DB.examNotices.length+'</b> 条考试预告、<b>'+DB.cheating.length+'</b> 条作弊记录、<b>'+DB.messages.length+'</b> 条消息、<b>'+DB.gradeRequests.length+'</b> 条申请及全部年级班级与管理人员账号，并退出登录。<br>该操作<b>不可恢复</b>，是否已导出备份？','我已备份，继续');
     if(!ok1)return;
     const ok2=await openModal({
       title:'第 2 次确认 · 输入文字',
@@ -2661,7 +3114,8 @@ function renderAdminData(){
       onOk(root){ if(root.querySelector('#clr').value.trim()!=='清空'){ root.querySelector('#clr-err').textContent='输入不正确，已取消清空'; return false; } return true; }
     });
     if(!ok2)return;
-    ['staff','students','grades','classes','scores','comments','announcements','messages','gradeRequests']
+    ['staff','students','grades','classes','scores','comments','announcements','messages',
+     'gradeRequests','examNotices','cheating']
       .forEach(k=>{ DB[k]=[];save(k); });
     DB.annRead={}; save('annRead');
     LS.del('session'); session=null; scoreFilter={classId:'',exam:''};
@@ -2687,10 +3141,17 @@ function renderStudentHome(){
     const cmtHtml=cmts.map(c=>'<div class="comment"><div class="who">'+
       esc(c.authorTitle||ROLE_NAME[c.authorRole]||'管理人员')+' · '+esc(c.authorName)+' 的评语</div>'+
       '<div class="txt">'+esc(c.content)+'</div></div>').join('');
-    return '<div class="exam-card">'+
+    const cheatHit=cheatingFor(session.id,r.exam,r.date);
+    const cheatHtml=cheatHit.length?
+      '<div class="cheat-note" style="margin:0 0 10px">⚠ 本次考试存在作弊 / 违纪记录：'+
+        cheatHit.map(c=>esc(c.reason||'—')+'（'+cheatSourceText(c)+'）').join('；')+'</div>':'';
+    return '<div class="exam-card"'+(cheatHit.length?' style="border-color:var(--danger);border-width:2px"':'')+'>'+
       '<div class="exam-head"><div><span class="t">'+esc(r.exam)+'</span> <span class="d">'+esc(r.date)+'</span></div>'+
-        '<span class="badge admin">总分 '+fmtNum(r.total)+'</span></div>'+
-      '<div class="exam-body"><p class="hint" style="margin-bottom:9px">仅显示语数英及你的选科科目（'+esc(comboName(me))+'），共 '+shown.length+' 科；总分按全部已录科目合计</p>'+
+        '<div style="display:flex;gap:8px;flex-wrap:wrap">'+
+          (cheatHit.length?'<span class="badge cheat">⚠ 作弊记录</span>':'')+
+          '<span class="badge admin">总分 '+fmtNum(r.total)+'</span></div></div>'+
+      '<div class="exam-body">'+(cheatHit.length?cheatHtml:'')+
+        '<p class="hint" style="margin-bottom:9px">仅显示语数英及你的选科科目（'+esc(comboName(me))+'），共 '+shown.length+' 科；总分按全部已录科目合计</p>'+
         '<div class="subj-grid">'+cells+'</div>'+
         '<div class="exam-foot">'+
           '<span>班级排名：<b>'+(rk?'第 '+rk.rank+' 名 / 共 '+rk.count+' 人':'—')+'</b></span>'+
@@ -2706,7 +3167,8 @@ function renderStudentHome(){
   const generalHtml=general.map(c=>'<div class="comment"><div class="who">'+
     esc(c.authorTitle||ROLE_NAME[c.authorRole]||'管理人员')+' · '+esc(c.authorName)+' · '+esc(new Date(c.createdAt).toLocaleString())+'</div>'+
     '<div class="txt">'+esc(c.content)+'</div></div>').join('');
-  const content=
+  const content=clockCardHtml()+
+    cheatAlertHtml(session.id)+
     '<div class="card" style="background:var(--navy-light);border-color:#c7d7f7">'+
       '<h2 style="margin-bottom:6px">'+esc(session.name||session.username)+' 同学，你好 👋</h2>'+
       '<p class="hint">班级：<b>'+esc(classNameOf(me))+'</b> ｜ 年级：<b>'+esc(gradeOf(me))+'</b> ｜ 选科组合：<b>'+esc(comboName(me))+'</b> ｜ 共 '+mine.length+' 次考试</p>'+
@@ -2717,7 +3179,10 @@ function renderStudentHome(){
         '<a class="btn ghost sm" href="#/student/honors">我的奖项</a>'+
         '<a class="btn ghost sm" href="#/student/requests">成绩查看申请</a>'+
         '<a class="btn ghost sm" href="#/student/comments">我的评语</a>'+
+        '<a class="btn ghost sm" href="#/exam-notices">考试预告</a>'+
+        '<a class="btn ghost sm" href="#/student/cheating">我的违纪记录</a>'+
       '</div></div>'+
+    examNoticeHtml(3)+
     announcementHtml()+
     (general.length?'<div class="card"><h2>通用评语</h2>'+generalHtml+'</div>':'')+cards;
   mount(page('我的成绩','首页 / 我的成绩',content));
@@ -2923,6 +3388,9 @@ function drawFallbackChart(canvas,labels,values){
 /* ---------- ⑧ 启动与数据迁移 ---------- */
 /** 兼容旧版数据：为老学生补 classId / combo，按 className 自动建班级与年级 */
 function migrate(){
+  // 旧版本没有「考试预告 / 作弊记录」键：初始化为空数组，避免读取时报错
+  if(!Array.isArray(DB.examNotices)) DB.examNotices=[];
+  if(!Array.isArray(DB.cheating)) DB.cheating=[];
   DB.students.forEach(s=>{
     if(!Array.isArray(s.combo)) s.combo=[];
     if(!Array.isArray(s.honors)) s.honors=[];   // 职称与奖项
@@ -2947,7 +3415,7 @@ function migrate(){
   // 旧成绩中选考科目若超过 100 分，仅做展示兼容、不改写数据
   // 统一落盘一次：既保存迁移结果，也为新增的 staff/grades/classes/comments/公告 建立键
   ['students','staff','grades','classes','scores','comments','announcements',
-   'messages','gradeRequests'].forEach(k=>save(k));
+   'messages','gradeRequests','examNotices','cheating'].forEach(k=>save(k));
   if(!DB.annRead||typeof DB.annRead!=='object') DB.annRead={};
   save('annRead');
   if(!DB.settings||typeof DB.settings!=='object') DB.settings={};
