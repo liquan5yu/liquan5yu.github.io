@@ -389,11 +389,62 @@ function gradeOf(stu){
   const c=classOf(stu);
   return c?(c.grade||NO_GRADE):(stu&&stu.grade)||NO_GRADE;
 }
+/* ---------- 自然排序（数字按数值比较，不再按字符串字典序） ----------
+   解决「高一(10)班」被排到「高一(1)班」之后、「高一(9)班」之前的问题：
+   字典序下 "10" < "2"，自然序下 2 < 9 < 10。
+   同时兼容中文数字：高一 / 高二 / 高三、九班 / 十班 / 十一班 等。
+   注意：中文数字按「单个字符」切段，避免「高三」+「九班」被误并成「三九」；
+   「十」与紧随其后的个位合并为 10+n（十一→11），但不与其前面的年级数字合并，
+   因此「高三十班」解析为 高三=3、十班=10，「高三十一班」解析为 3、11。 */
+const CN_NUM={'零':0,'〇':0,'一':1,'二':2,'两':2,'三':3,'四':4,'五':5,'六':6,'七':7,'八':8,'九':9};
+/** 把字符串切成「数字段 / 文本段」序列，如「高一(10)班」→ 高 | 1 | ( | 10 | )班 */
+function natParts(s){
+  const str=String(s===undefined||s===null?'':s),raw=[];
+  // 每个中文数字单独成段；阿拉伯数字串整体成段
+  const re=/(\d+|[零〇一二两三四五六七八九十])/g;
+  let last=0,m;
+  while((m=re.exec(str))!==null){
+    if(m.index>last) raw.push({num:false,v:str.slice(last,m.index)});
+    raw.push({num:true,raw:m[0]});
+    last=re.lastIndex;
+  }
+  if(last<str.length) raw.push({num:false,v:str.slice(last)});
+  // 中文「十」+ 个位 → 10+n；其余中文数字与阿拉伯数字直接转成数值
+  const parts=[];
+  for(let i=0;i<raw.length;i++){
+    const t=raw[i];
+    if(!t.num){ parts.push(t); continue; }
+    if(t.raw==='十'){
+      const nx=raw[i+1];
+      if(nx&&nx.num&&/^[一二两三四五六七八九]$/.test(nx.raw)){
+        parts.push({num:true,v:10+CN_NUM[nx.raw]}); i++; continue;
+      }
+      parts.push({num:true,v:10}); continue;
+    }
+    parts.push({num:true,v:/^\d+$/.test(t.raw)?Number(t.raw):CN_NUM[t.raw]});
+  }
+  return parts;
+}
+/** 自然排序比较函数：数字段按数值，文本段按本地化文本比较 */
+function naturalCompare(a,b){
+  const A=natParts(a),B=natParts(b),n=Math.max(A.length,B.length);
+  for(let i=0;i<n;i++){
+    const x=A[i],y=B[i];
+    if(!x) return -1;
+    if(!y) return 1;
+    if(x.num&&y.num){ if(x.v!==y.v) return x.v-y.v; continue; }
+    if(x.num!==y.num) return x.num?-1:1;
+    const c=x.v.localeCompare(y.v,'zh-CN');
+    if(c) return c;
+  }
+  return 0;
+}
+/** 班级统一排序：先按年级（含高一/高二/高三的中文数字顺序），再按班级名自然序 */
 function allClassesSorted(){
   return DB.classes.slice().sort((a,b)=>
-    (a.grade||'').localeCompare(b.grade||'')||a.name.localeCompare(b.name));
+    naturalCompare(a.grade||'',b.grade||'')||naturalCompare(a.name||'',b.name||''));
 }
-function allGrades(){ return DB.grades.slice().sort(); }
+function allGrades(){ return DB.grades.slice().sort(naturalCompare); }
 function allExams(){ return [...new Set(DB.scores.map(r=>r.exam).filter(Boolean))].sort(); }
 /** 考试批次 = 考试名称 + 日期，用于界定"同一次考试" */
 function allBatches(){
@@ -495,7 +546,7 @@ function rankingData(exam,date,grade,combo){
     const k=x.classId||x.className;
     if(!byClass.has(k)||x.rec.total>byClass.get(k).rec.total) byClass.set(k,x);
   });
-  return {rows,top,classFirsts:[...byClass.values()].sort((a,b)=>a.className.localeCompare(b.className))};
+  return {rows,top,classFirsts:[...byClass.values()].sort((a,b)=>naturalCompare(a.className,b.className))};
 }
 /** 管理员开关：班主任是否可查看其它选科的班级第一 / 年级第一 */
 function headCanViewOtherCombo(){ return !!DB.settings.headOtherComboFirst; }
@@ -739,7 +790,7 @@ function subjectTopData(exam,date,sub){
     byClass.get(k).push(x);
   });
   const classTop=[];
-  [...byClass.values()].sort((a,b)=>a[0].className.localeCompare(b[0].className)).forEach(list=>{
+  [...byClass.values()].sort((a,b)=>naturalCompare(a[0].className,b[0].className)).forEach(list=>{
     const arr=list.slice().sort((a,b)=>b.score-a.score||a.name.localeCompare(b.name));
     arr.slice(0,10).forEach((x,i)=>classTop.push(Object.assign({},x,{rank:rankOf(arr,i)})));
   });
@@ -1355,7 +1406,7 @@ function renderOrg(){
   const gradeOptions='<option value="">请选择年级</option>'+allGrades().map(g=>'<option value="'+esc(g)+'">'+esc(g)+'</option>').join('');
   const classOptions='<option value="">请选择班级</option>'+allClassesSorted().map(c=>
     '<option value="'+esc(c.id)+'">'+esc(classLabel(c))+'</option>').join('');
-  const gradeRows=DB.grades.map(g=>{
+  const gradeRows=allGrades().map(g=>{
     const n=DB.classes.filter(c=>c.grade===g).length;
     const s=DB.students.filter(x=>gradeOf(x)===g).length;
     return '<tr><td><b>'+esc(g)+'</b></td><td>'+n+'</td><td>'+s+'</td><td>'+
@@ -2002,12 +2053,10 @@ async function delScore(id){
 
 /* ----- 统计分析：单科平均分/最高分/最低分 + 班级总分排名 ----- */
 function renderAdminStats(){
-  // 班级下拉只列当前角色可见范围内的班级，value 用班级 ID（不同年级可同名）
-  const visibleClassIds=[...new Set(visibleStudents().map(classIdOf))].filter(Boolean);
-  const classOpts=visibleClassIds.map(id=>{
-    const c=DB.classes.find(x=>x.id===id);
-    return '<option value="'+esc(id)+'">'+esc(classLabel(c))+'</option>';
-  }).join('');
+  // 班级下拉只列当前角色可见范围内的班级，value 用班级 ID（不同年级可同名），顺序统一用自然排序
+  const visibleClassIds=new Set(visibleStudents().map(classIdOf));
+  const classOpts=allClassesSorted().filter(c=>visibleClassIds.has(c.id)).map(c=>
+    '<option value="'+esc(c.id)+'">'+esc(classLabel(c))+'</option>').join('');
   const examOpts='<option value="">全部考试</option>'+allExams().map(e=>'<option value="'+esc(e)+'">'+esc(e)+'</option>').join('');
   const batchOpts=allBatches().map(b=>'<option value="'+esc(b.exam+'|'+b.date)+'">'+esc(b.exam+' · '+b.date)+'</option>').join('')
     ||'<option value="">暂无考试批次</option>';
@@ -2075,7 +2124,7 @@ function renderRanking(){
   // 年级下拉 = 已登记年级 ∪ 学生实际所属年级（兼容旧数据迁移产生的年级）
   const gradeSet=new Set(DB.grades);
   DB.students.forEach(s=>gradeSet.add(gradeOf(s)));
-  const gradeList=[...gradeSet].sort();
+  const gradeList=[...gradeSet].sort(naturalCompare);
   const gradeOpts=gradeList.map(g=>'<option value="'+esc(g)+'">'+esc(g)+'</option>').join('')
     ||'<option value="">暂无年级</option>';
   // 班主任受管理员开关约束：关闭时只能查看本班涉及的选科组合榜首
