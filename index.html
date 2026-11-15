@@ -165,6 +165,11 @@ td .ops{display:flex;gap:6px;flex-wrap:wrap}
 .mgr-box b{color:var(--text)}
 .mgr-cell{font-size:12px;line-height:1.7;white-space:normal;min-width:150px}
 .mgr-cell span{color:var(--muted)}
+.mgr-contact{font-size:12px;color:var(--navy-dark);margin-top:2px;padding-left:14px;border-left:2px solid #c7d7f7}
+.mgr-contact span{color:var(--muted)}
+.notice-line{display:flex;align-items:center;justify-content:space-between;gap:10px;
+  padding:9px 0;border-bottom:1px dashed var(--line);font-size:13px;flex-wrap:wrap}
+.notice-line:last-child{border-bottom:none}
 /* ============ 公告 ============ */
 .ann-item{border:1px solid var(--line);border-radius:9px;padding:11px 13px;margin-bottom:10px;background:#fff}
 .ann-item.force{background:var(--warn-bg);border-color:#fde68a}
@@ -232,9 +237,10 @@ pre.log{background:var(--gray);border:1px solid var(--line);border-radius:8px;pa
    桂林市第三中学成绩管理系统 · 单文件纯前端版（增强版）
    数据全部保存在浏览器 LocalStorage（键前缀 hsgs_），无后端、无数据联网请求。
    角色：管理员 / 年级主任 / 教务处主任 / 学校领导 / 班主任 / 学生
-   功能：年级与班级、选科组合、选科年级排名与榜首姓名、分科满分、评语、
+   功能：年级与班级（支持按编号范围批量新增）、选科组合、选科年级排名与榜首姓名、分科满分、评语、
          公告（可设强制展示）、消息通知、学生职称与奖项、单科班级前十/年级前五十、
-         成绩查看申请与班主任审批、学生端仅显示本人选科科目、班级管理人员查看
+         成绩查看申请与班主任审批、学生端仅显示本人选科科目、班级管理人员查看、
+         批量删除学生账号、管理人员联系方式与自定义信息、管理主页多维数据卡片
    代码分区：① 存储与常量 ② 通用工具 ③ 业务计算与权限 ④ 路由与框架
              ⑤ 页面渲染 ⑥ 批量导入 ⑦ 图表 ⑧ 启动与数据迁移
    ===================================================================== */
@@ -249,7 +255,7 @@ const LS={
 // 注意：账号密码仅用于本地演示，LocalStorage 为明文存储，请勿使用真实敏感密码。
 const DB={
   admin:         LS.get('admin',null),      // {username,password}
-  staff:         LS.get('staff',[]),        // 管理人员 [{id,username,password,name,role,title,grade,classId}]
+  staff:         LS.get('staff',[]),        // 管理人员 [{id,username,password,name,role,title,grade,classId,contact:{phone,email,office,remark,extra:[{key,value}]}}]
   students:      LS.get('students',[]),     // [{id,username,password,name,classId,combo,honors}]
   grades:        LS.get('grades',[]),       // ['高一','高二','高三'...]
   classes:       LS.get('classes',[]),      // [{id,name,grade}]
@@ -278,7 +284,7 @@ const STAFF_TITLES=['班主任','年级主任','教务处主任','学校领导']
 const ROLE_NAME={admin:'管理员',leader:'学校领导',head:'班主任',student:'学生'};
 const UNCLASSIFIED='未分班', NO_GRADE='未分组年级';
 let chartInst=null;
-let scoreFilter={className:'',exam:''};
+let scoreFilter={classId:'',exam:''};
 
 function save(k){ LS.set(k,DB[k]); }
 function saveSession(){ LS.set('session',session); }
@@ -355,8 +361,30 @@ function comboName(stu){
   return [...primary,...rest].map(s=>ABBR[s]||s).join('');
 }
 function classOf(stu){ return stu?DB.classes.find(c=>c.id===stu.classId)||null:null; }
-function classNameOf(stu){ const c=classOf(stu); return c?c.name:(stu&&stu.className)||UNCLASSIFIED; }
+/** 班级显示标签：年级 + 名称。不同年级允许同名班级（如 高一·2班 / 高二·2班）。
+ *  兼容旧数据：名称本身已以年级开头（如「高一(1)班」）时不重复拼接年级。 */
+function classLabel(c){
+  if(!c) return UNCLASSIFIED;
+  const g=c.grade||'';
+  if(g&&g!==NO_GRADE&&c.name.indexOf(g)===0) return c.name;
+  return (g?g+' · ':'')+c.name;
+}
+function classNameOf(stu){ const c=classOf(stu); return c?classLabel(c):(stu&&stu.className)||UNCLASSIFIED; }
 function classIdOf(stu){ const c=classOf(stu); return c?c.id:null; }
+/** 按年级 + 名称查找班级，用于批量导入的班级文本解析（支持「高一 · 2班」或「2班」） */
+function findClassByText(raw){
+  const t=String(raw||'').trim();
+  if(!t) return {cls:null,ambiguous:[]};
+  let cls=null;
+  // 优先按完整显示标签精确匹配（年级 · 名称）
+  cls=DB.classes.find(c=>classLabel(c)===t)||null;
+  if(cls) return {cls,ambiguous:[]};
+  // 再按名称匹配；同名跨年级时返回歧义列表，要求写明年级
+  const matches=DB.classes.filter(c=>c.name===t);
+  if(matches.length===1) return {cls:matches[0],ambiguous:[]};
+  if(matches.length>1) return {cls:null,ambiguous:matches};
+  return {cls:null,ambiguous:[]};
+}
 function gradeOf(stu){
   const c=classOf(stu);
   return c?(c.grade||NO_GRADE):(stu&&stu.grade)||NO_GRADE;
@@ -458,13 +486,13 @@ function rankingData(exam,date,grade,combo){
   const rows=sorted.map((r,i)=>{
     const rank=i>0&&sorted[i-1].total===r.total?sorted.slice(0,i).findIndex(x=>x.total===r.total)+1:i+1;
     const s=stuOf(r.studentId)||{};
-    return {rank,rec:r,stu:s,className:classNameOf(s),combo:comboName(s)};
+    return {rank,rec:r,stu:s,classId:classIdOf(s),className:classNameOf(s),combo:comboName(s)};
   });
   const top=rows.length?rows.filter(x=>x.rank===1).map(x=>x.stu.name).filter(Boolean):[];
-  // 各班班级第一（同年级同组合内按班级分组取最高分）
+  // 各班班级第一：按班级 ID 分组，避免不同年级同名班级被合并
   const byClass=new Map();
   rows.forEach(x=>{
-    const k=x.className;
+    const k=x.classId||x.className;
     if(!byClass.has(k)||x.rec.total>byClass.get(k).rec.total) byClass.set(k,x);
   });
   return {rows,top,classFirsts:[...byClass.values()].sort((a,b)=>a.className.localeCompare(b.className))};
@@ -526,20 +554,92 @@ function leadersFor(stu){
   const g=gradeOf(stu);
   return DB.staff.filter(s=>s.role==='leader'&&(!s.grade||s.grade===g));
 }
-/** 「班主任 / 管理领导」的可读文本 */
-function managersText(stu){
-  const hs=headsFor(stu).map(s=>staffTitle(s)+' '+s.name);
-  const ls=leadersFor(stu).map(s=>staffTitle(s)+' '+s.name);
+/** 管理人员联系方式：兼容旧数据（无 contact 字段时返回空结构） */
+function staffContact(s){
+  const c=(s&&s.contact&&typeof s.contact==='object')?s.contact:{};
   return {
-    heads:hs.length?hs.join('、'):'暂未指定',
-    leaders:ls.length?ls.join('、'):'暂未指定'
+    phone:c.phone||'', email:c.email||'', office:c.office||'', remark:c.remark||'',
+    extra:Array.isArray(c.extra)?c.extra.filter(x=>x&&x.key&&x.value):[]
   };
 }
-/** 「本班班主任 / 管理领导」信息块，新增学生账号时随所选班级联动 */
+/** 联系方式摘要文本（用于列表、通讯录、学生端） */
+function staffContactText(s){
+  const c=staffContact(s);
+  const parts=[];
+  if(c.phone) parts.push('☎ '+c.phone);
+  if(c.email) parts.push('✉ '+c.email);
+  if(c.office) parts.push('📍 '+c.office);
+  c.extra.forEach(x=>parts.push(x.key+' '+x.value));
+  return parts.join(' ｜ ')||'未填写';
+}
+/** 「班主任 / 管理领导」的可读文本 */
+function managersText(stu){
+  const hs=headsFor(stu), ls=leadersFor(stu);
+  const fmt=s=>staffTitle(s)+' '+s.name;
+  return {
+    heads:hs.length?hs.map(fmt).join('、'):'暂未指定',
+    leaders:ls.length?ls.map(fmt).join('、'):'暂未指定',
+    headContacts:hs.map(s=>({label:fmt(s),contact:staffContactText(s)})),
+    leaderContacts:ls.map(s=>({label:fmt(s),contact:staffContactText(s)}))
+  };
+}
+/** 「本班班主任 / 管理领导」信息块，新增学生账号时随所选班级联动，附带联系方式 */
 function managersBlockHtml(cid){
   const m=managersText({classId:cid});
+  const lines=arr=>arr.length?arr.map(x=>
+    '<div class="mgr-contact">'+esc(x.label)+'：<span>'+esc(x.contact)+'</span></div>').join(''):'';
   return '<div class="mgr-box"><div>👩‍🏫 本班班主任：<b>'+esc(m.heads)+'</b></div>'+
-    '<div>🏫 管理领导（年级主任 / 教务处主任）：<b>'+esc(m.leaders)+'</b></div></div>';
+    '<div>🏫 管理领导（年级主任 / 教务处主任）：<b>'+esc(m.leaders)+'</b></div>'+
+    lines(m.headContacts.concat(m.leaderContacts))+'</div>';
+}
+/** 成绩概览：参考记录数、平均 / 最高 / 最低总分 */
+function scoreSummary(list){
+  if(!list.length) return {count:0,avg:null,max:null,min:null};
+  const t=list.map(r=>r.total).filter(v=>typeof v==='number');
+  if(!t.length) return {count:0,avg:null,max:null,min:null};
+  return {count:t.length,avg:t.reduce((a,b)=>a+b,0)/t.length,
+    max:Math.max.apply(null,t),min:Math.min.apply(null,t)};
+}
+/** 通用小卡片（主页信息卡复用） */
+function infoStat(k,v,sub){
+  return '<div class="stat"><div class="k">'+esc(k)+'</div>'+
+    '<div class="v'+(String(v).length>7?' small':'')+'">'+esc(v)+'</div>'+
+    (sub?'<div class="hint">'+esc(sub)+'</div>':'')+'</div>';
+}
+/** 管理人员通讯录（仅管理角色可见） */
+function staffDirectoryHtml(){
+  if(!DB.staff.length) return '';
+  const rows=DB.staff.slice().sort((a,b)=>
+    (a.role||'').localeCompare(b.role||'')||(a.name||'').localeCompare(b.name||''))
+    .map(s=>{
+      const c=staffContact(s);
+      const scope=s.role==='head'
+        ? classLabel(DB.classes.find(x=>x.id===s.classId)||null)
+        : (s.grade||'全校');
+      const extra=c.extra.length?'<br>'+c.extra.map(x=>esc(x.key+'：'+x.value)).join('<br>'):'';
+      return '<tr><td><b>'+esc(s.name)+'</b></td><td>'+esc(staffTitle(s))+'</td>'+
+        '<td>'+esc(scope)+'</td><td>'+esc(c.phone||'—')+'</td><td>'+esc(c.email||'—')+'</td>'+
+        '<td>'+esc(c.office||'—')+'</td><td style="white-space:normal">'+
+          (c.extra.length?extra.slice(4):'—')+'</td>'+
+        '<td style="white-space:normal">'+esc(c.remark||'—')+'</td></tr>';
+    }).join('');
+  return '<div class="card"><h2>管理人员通讯录 <span class="tag">共 '+DB.staff.length+' 人</span></h2>'+
+    '<div class="table-scroll"><table><thead><tr><th>姓名</th><th>职务</th><th>管辖范围</th>'+
+    '<th>联系电话</th><th>电子邮箱</th><th>办公地点</th><th>自定义信息</th><th>备注</th></tr></thead>'+
+    '<tbody>'+rows+'</tbody></table></div></div>';
+}
+/** 年级 / 班级分布卡 */
+function gradeDistHtml(students){
+  const grades=allGrades();
+  const rows=grades.map(g=>{
+    const cls=DB.classes.filter(c=>c.grade===g);
+    const ids=new Set(cls.map(c=>c.id));
+    const n=students.filter(s=>ids.has(classIdOf(s))).length;
+    return '<tr><td><b>'+esc(g)+'</b></td><td>'+cls.length+'</td><td>'+n+'</td></tr>';
+  }).join('');
+  return '<div class="card"><h2>年级班级分布</h2>'+
+    '<div class="table-scroll"><table><thead><tr><th>年级</th><th>班级数</th><th>学生数</th></tr></thead>'+
+    '<tbody>'+(rows||'<tr><td colspan="3" class="empty">暂无年级</td></tr>')+'</tbody></table></div></div>';
 }
 /** 允许录入/展示的科目：语数英 + 本人选考科目；未选科时不限 */
 function allowedSubjects(stu){
@@ -625,7 +725,7 @@ function subjectTopData(exam,date,sub){
   const rows=DB.scores.filter(r=>r.exam===exam&&r.date===date&&typeof r.scores[sub]==='number')
     .map(r=>{
       const s=stuOf(r.studentId)||{};
-      return {rec:r,stu:s,name:s.name||'-',className:classNameOf(s),
+      return {rec:r,stu:s,name:s.name||'-',classId:classIdOf(s),className:classNameOf(s),
         combo:comboName(s),score:r.scores[sub]};
     }).filter(x=>x.stu.id);
   const rankOf=(arr,i)=>i>0&&arr[i-1].score===arr[i].score
@@ -634,12 +734,13 @@ function subjectTopData(exam,date,sub){
   const gradeTop=gs.slice(0,50).map((x,i)=>Object.assign({},x,{rank:rankOf(gs,i)}));
   const byClass=new Map();
   rows.forEach(x=>{
-    if(!byClass.has(x.className))byClass.set(x.className,[]);
-    byClass.get(x.className).push(x);
+    const k=x.classId||x.className;   // 按班级 ID 分组，不同年级同名班级互不合并
+    if(!byClass.has(k))byClass.set(k,[]);
+    byClass.get(k).push(x);
   });
   const classTop=[];
-  [...byClass.keys()].sort().forEach(cn=>{
-    const arr=byClass.get(cn).slice().sort((a,b)=>b.score-a.score||a.name.localeCompare(b.name));
+  [...byClass.values()].sort((a,b)=>a[0].className.localeCompare(b[0].className)).forEach(list=>{
+    const arr=list.slice().sort((a,b)=>b.score-a.score||a.name.localeCompare(b.name));
     arr.slice(0,10).forEach((x,i)=>classTop.push(Object.assign({},x,{rank:rankOf(arr,i)})));
   });
   return {gradeTop,classTop,total:rows.length};
@@ -874,12 +975,20 @@ function renderAdminHome(){
       '<td>'+esc(classNameOf(s))+'</td><td>'+esc(gradeOf(s))+'</td><td>'+esc(comboName(s))+'</td>'+
       '<td><b>'+fmtNum(r.total)+'</b></td></tr>';
   }).join('')||'<tr><td colspan="7" class="empty">暂无成绩记录</td></tr>';
+  const sum=scoreSummary(DB.scores);
+  const pending=DB.gradeRequests.filter(q=>q.status==='pending').length;
+  const forced=DB.announcements.filter(a=>a.force).length;
+  const honors=DB.students.reduce((n,s)=>n+honorsOf(s).length,0);
+  const combos=new Set(DB.students.map(comboName)).size;
+  const unclassified=DB.students.filter(s=>!classIdOf(s)).length;
+  const batches=allBatches();
+  const latest=batches.length?batches[0].date:'—';
   const content=
     '<div class="stat-grid">'+
-      '<div class="stat"><div class="k">年级数</div><div class="v">'+DB.grades.length+'</div></div>'+
-      '<div class="stat"><div class="k">班级数</div><div class="v">'+DB.classes.length+'</div></div>'+
-      '<div class="stat"><div class="k">学生账号</div><div class="v">'+DB.students.length+'</div></div>'+
-      '<div class="stat"><div class="k">管理人员</div><div class="v">'+DB.staff.length+'</div></div>'+
+      infoStat('年级数',DB.grades.length)+infoStat('班级数',DB.classes.length)+
+      infoStat('学生账号',DB.students.length)+infoStat('管理人员',DB.staff.length)+
+      infoStat('成绩记录',DB.scores.length)+infoStat('考试批次',batches.length)+
+      infoStat('待审批申请',pending)+infoStat('职称奖项',honors)+
     '</div>'+
     '<div class="card"><h2>快捷操作 <span class="tag">管理员面板</span></h2>'+
       '<div style="display:flex;gap:10px;flex-wrap:wrap">'+
@@ -895,6 +1004,26 @@ function renderAdminHome(){
         '<a class="btn ghost" href="#/requests">查看申请</a>'+
         '<a class="btn ghost" href="#/data">导出备份</a>'+
       '</div></div>'+
+    '<div class="grid g2">'+
+      '<div class="card"><h2>待办与提醒</h2>'+
+        '<div class="notice-line"><span>📝 待审批成绩查看申请</span><span><b>'+pending+'</b> 条 · <a href="#/requests">去查看</a></span></div>'+
+        '<div class="notice-line"><span>📢 强制展示公告</span><span><b>'+forced+'</b> 条 · <a href="#/announcements">去管理</a></span></div>'+
+        '<div class="notice-line"><span>👤 未分班学生</span><span><b>'+unclassified+'</b> 人 · <a href="#/students">去处理</a></span></div>'+
+        '<div class="notice-line"><span>🗓 最近考试日期</span><span><b>'+esc(latest)+'</b></span></div>'+
+      '</div>'+
+      '<div class="card"><h2>成绩概览 <span class="tag">全部成绩记录</span></h2>'+
+        '<div class="stat-grid" style="grid-template-columns:repeat(2,minmax(0,1fr));gap:10px">'+
+          infoStat('平均总分',sum.avg===null?'—':fmtNum(sum.avg))+
+          infoStat('最高总分',sum.max===null?'—':fmtNum(sum.max))+
+          infoStat('最低总分',sum.min===null?'—':fmtNum(sum.min))+
+          infoStat('有效记录',sum.count)+
+        '</div>'+
+        '<p class="hint" style="margin-top:10px">评语 '+DB.comments.length+' 条 ｜ 消息 '+DB.messages.length+
+          ' 条 ｜ 选科组合 '+combos+' 种 ｜ 查看申请 '+DB.gradeRequests.length+' 条</p>'+
+      '</div>'+
+    '</div>'+
+    gradeDistHtml(DB.students)+
+    staffDirectoryHtml()+
     announcementHtml()+
     '<div class="card"><h2>最近录入成绩</h2><div class="table-scroll"><table>'+
       '<thead><tr><th>考试日期</th><th>考试名称</th><th>学生</th><th>班级</th><th>年级</th><th>选科</th><th>总分</th></tr></thead>'+
@@ -904,7 +1033,7 @@ function renderAdminHome(){
 /* ----- 班主任「班级排名成绩单」组件（工作台内嵌 + 独立页复用） ----- */
 function headReportCard(compact){
   const myClass=DB.classes.find(c=>c.id===session.classId);
-  const cname=myClass?myClass.name:UNCLASSIFIED;
+  const cname=myClass?classLabel(myClass):UNCLASSIFIED;
   const batchOpts=allBatches().map(b=>
     '<option value="'+esc(b.exam+'|'+b.date)+'">'+esc(b.exam+' · '+b.date)+'</option>').join('')
     ||'<option value="">暂无考试批次</option>';
@@ -994,14 +1123,24 @@ function renderStaffHome(){
   const myScores=DB.scores.filter(visibleScore);
   const myClass=DB.classes.find(c=>c.id===session.classId);
   const scopeTxt=role==='head'
-    ? '管辖班级：'+(myClass?myClass.name:UNCLASSIFIED)
+    ? '管辖班级：'+(myClass?classLabel(myClass):UNCLASSIFIED)
     : (session.grade?'管辖年级：'+session.grade:'管辖范围：全校');
+  const sum=scoreSummary(myScores);
+  const pending=visibleGradeRequests().filter(q=>q.status==='pending').length;
+  const myComments=DB.comments.filter(c=>c.authorId===session.id).length;
+  const sentMsgs=DB.messages.filter(m=>m.senderId===session.id).length;
+  const honors=mine.reduce((n,s)=>n+honorsOf(s).length,0);
+  const combos=new Set(mine.map(comboName)).size;
+  const classCount=new Set(mine.map(classIdOf)).size;
+  const batches=allBatches();
+  const latest=batches.length?batches[0].date:'—';
+  const forced=DB.announcements.filter(a=>a.force).length;
   const content=
     '<div class="stat-grid">'+
-      '<div class="stat"><div class="k">可见学生</div><div class="v">'+mine.length+'</div></div>'+
-      '<div class="stat"><div class="k">可见成绩</div><div class="v">'+myScores.length+'</div></div>'+
-      '<div class="stat"><div class="k">考试批次</div><div class="v">'+allBatches().length+'</div></div>'+
-      '<div class="stat"><div class="k">已写评语</div><div class="v">'+DB.comments.filter(c=>c.authorId===session.id).length+'</div></div>'+
+      infoStat('可见学生',mine.length)+infoStat('可见成绩',myScores.length)+
+      infoStat('考试批次',batches.length)+infoStat('已写评语',myComments)+
+      infoStat('待处理申请',pending)+infoStat('职称奖项',honors)+
+      infoStat('已发消息',sentMsgs)+infoStat(role==='head'?'本班选科组合':'涉及班级',role==='head'?combos:classCount)+
     '</div>'+
     '<div class="card"><h2>'+esc(session.title||ROLE_NAME[role])+'工作台 <span class="tag">'+esc(scopeTxt)+'</span></h2>'+
       '<div style="display:flex;gap:10px;flex-wrap:wrap">'+
@@ -1014,6 +1153,29 @@ function renderStaffHome(){
         '<a class="btn ghost" href="#/requests">'+(role==='head'?'申请审批':'查看申请')+'</a>'+
         '<a class="btn ghost" href="#/stats">统计分析</a>'+
       '</div></div>'+
+    '<div class="grid g2">'+
+      '<div class="card"><h2>成绩概览 <span class="tag">权限内可见成绩</span></h2>'+
+        '<div class="stat-grid" style="grid-template-columns:repeat(2,minmax(0,1fr));gap:10px">'+
+          infoStat('平均总分',sum.avg===null?'—':fmtNum(sum.avg))+
+          infoStat('最高总分',sum.max===null?'—':fmtNum(sum.max))+
+          infoStat('最低总分',sum.min===null?'—':fmtNum(sum.min))+
+          infoStat('有效记录',sum.count)+
+        '</div>'+
+        '<p class="hint" style="margin-top:10px">最近考试日期：'+esc(latest)+' ｜ 选科组合 '+combos+' 种 ｜ 涉及班级 '+classCount+' 个</p>'+
+      '</div>'+
+      '<div class="card"><h2>待办与提醒</h2>'+
+        '<div class="notice-line"><span>📝 待处理成绩查看申请</span><span><b>'+pending+'</b> 条 · <a href="#/requests">'+(role==='head'?'去审批':'去查看')+'</a></span></div>'+
+        '<div class="notice-line"><span>📢 强制展示公告</span><span><b>'+forced+'</b> 条 · <a href="#/announcements">去查看</a></span></div>'+
+        '<div class="notice-line"><span>🏆 '+(role==='head'?'本班':'权限内')+'职称奖项</span><span><b>'+honors+'</b> 条 · <a href="#/honors">去查看</a></span></div>'+
+        '<div class="notice-line"><span>✉ 已发送消息</span><span><b>'+sentMsgs+'</b> 条 · <a href="#/message-send">继续发送</a></span></div>'+
+      '</div>'+
+    '</div>'+
+    (role==='head'?'':'<div class="grid g2">'+gradeDistHtml(mine)+'<div class="card"><h2>管辖范围</h2>'+
+      '<div class="stat-grid" style="grid-template-columns:repeat(2,minmax(0,1fr));gap:10px">'+
+        infoStat('可见学生',mine.length)+infoStat('涉及班级',classCount)+
+        infoStat('可见成绩',myScores.length)+infoStat('已写评语',myComments)+
+      '</div></div></div>')+
+    staffDirectoryHtml()+
     (role==='head'?'<p style="margin:-6px 0 12px"><a class="btn primary" href="#/head/report">查看班级排名成绩单（本班各科第一）→</a></p>':'')+
     (role==='head'?headReportCard(true):'')+
     announcementHtml();
@@ -1021,11 +1183,178 @@ function renderStaffHome(){
   if(role==='head') bindHeadReport();
 }
 
+/* ----- 管理人员「自定义联系方式等信息」通用组件 ----- */
+/** 一条自定义字段行：项目名称 + 内容 + 移除按钮 */
+function extraRowHtml(key,value){
+  return '<div class="grid g3 extra-row" style="margin-bottom:8px">'+
+    '<div class="field"><input class="ex-k" placeholder="项目名称（如 微信 / QQ / 座机）" value="'+esc(key||'')+'"></div>'+
+    '<div class="field"><input class="ex-v" placeholder="内容" value="'+esc(value||'')+'"></div>'+
+    '<div class="field"><label>&nbsp;</label><button type="button" class="btn ghost sm" data-exdel>移除</button></div>'+
+  '</div>';
+}
+function addExtraRow(root,key,value){
+  const box=root.querySelector('#sf-extra'); if(!box)return;
+  const wrap=document.createElement('div');
+  wrap.innerHTML=extraRowHtml(key,value);
+  const row=wrap.firstElementChild;
+  row.querySelector('[data-exdel]').onclick=()=>{ row.remove(); };
+  box.appendChild(row);
+}
+/** 绑定「添加自定义字段」按钮（表单与编辑资料弹窗复用） */
+function bindExtraRows(root,initial){
+  const box=root.querySelector('#sf-extra'); if(!box)return;
+  (initial||[]).forEach(x=>addExtraRow(root,x.key,x.value));
+  const btn=root.querySelector('#sf-extra-add');
+  if(btn) btn.onclick=()=>addExtraRow(root,'','');
+}
+function readExtraRows(root){
+  return [...root.querySelectorAll('#sf-extra .extra-row')].map(r=>({
+    key:r.querySelector('.ex-k').value.trim(),
+    value:r.querySelector('.ex-v').value.trim()
+  })).filter(x=>x.key&&x.value);
+}
+/** 表单/弹窗中读取联系方式字段 */
+function readContact(root){
+  const q=s=>{ const e=root.querySelector(s); return e?e.value.trim():''; };
+  return {phone:q('#sf-phone'),email:q('#sf-email'),office:q('#sf-office'),
+    remark:q('#sf-remark'),extra:readExtraRows(root)};
+}
+/** 联系方式表单 HTML（id 前缀固定，表单与弹窗复用） */
+function contactFormHtml(c){
+  c=c||{phone:'',email:'',office:'',remark:'',extra:[]};
+  return '<div class="grid g4" style="margin-top:12px">'+
+      '<div class="field"><label>联系电话</label><input id="sf-phone" value="'+esc(c.phone||'')+'" placeholder="如 13800138000"></div>'+
+      '<div class="field"><label>电子邮箱</label><input id="sf-email" value="'+esc(c.email||'')+'" placeholder="如 name@school.edu.cn"></div>'+
+      '<div class="field"><label>办公地点</label><input id="sf-office" value="'+esc(c.office||'')+'" placeholder="如 教学楼 A301"></div>'+
+      '<div class="field"><label>备注</label><input id="sf-remark" value="'+esc(c.remark||'')+'" placeholder="如 分管德育"></div>'+
+    '</div>'+
+    '<h3>自定义联系方式 / 补充信息</h3>'+
+    '<div id="sf-extra"></div>'+
+    '<button type="button" class="btn ghost sm" id="sf-extra-add">＋ 添加自定义字段</button>'+
+    '<p class="hint" style="margin-top:6px">可自定义任意项目，如「微信」「QQ」「办公电话」「值班时间」等；项目名称与内容都填写才会保存。</p>';
+}
+
+/* ----- 批量新增班级：按年级 + 名称模板 + 编号范围，一次生成任意数量班级 ----- */
+const MAX_BATCH_CLASSES=200;   // 单次上限，防止误输入超大范围导致浏览器卡顿
+/** 模板用 {n} 表示编号，例如「高一({n})班」+ 1~10 → 高一(1)班 … 高一(10)班 */
+function openBatchClasses(){
+  const grades=allGrades();
+  if(!grades.length) return toast('请先新增年级','err');
+  const defaultGrade=val('c-grade')||grades[0];
+  const gradeOpts=grades.map(g=>'<option value="'+esc(g)+'"'+(g===defaultGrade?' selected':'')+'>'+esc(g)+'</option>').join('');
+  const tpl0=defaultGrade+'({n})班';
+  let result=null;
+  openModal({
+    title:'批量新增班级',width:560,okText:'一键生成',
+    body:'<div class="grid g2">'+
+      '<div class="field"><label>所属年级</label><select id="bc-grade">'+gradeOpts+'</select></div>'+
+      '<div class="field"><label>名称模板（必须含 {n}）</label><input id="bc-tpl" value="'+esc(tpl0)+'" placeholder="如 高一({n})班"></div>'+
+      '<div class="field"><label>起始编号</label><input id="bc-from" type="number" min="0" value="1"></div>'+
+      '<div class="field"><label>结束编号</label><input id="bc-to" type="number" min="0" value="10"></div>'+
+    '</div>'+
+    '<div class="chk-line" style="margin-top:10px">'+
+      '<span class="hint">快捷模板：</span>'+
+      '<button type="button" class="btn ghost sm" data-tpl="__G__({n})班">年级({n})班</button>'+
+      '<button type="button" class="btn ghost sm" data-tpl="({n})班">({n})班</button>'+
+      '<button type="button" class="btn ghost sm" data-tpl="{n}班">{n}班</button>'+
+    '</div>'+
+    '<div id="bc-preview" class="total-box" style="margin-top:12px;font-size:13px"></div>'+
+    '<div class="err" id="bc-err"></div>',
+    onOpen(root){
+      const q=s=>root.querySelector(s);
+      const gradeEl=q('#bc-grade'),tplEl=q('#bc-tpl'),fromEl=q('#bc-from'),toEl=q('#bc-to');
+      const preview=q('#bc-preview'),err=q('#bc-err');
+      let lastGrade=defaultGrade;
+      /** 解析当前表单：返回 {names:[{name,label}],err,from,to,grade,tpl} */
+      const build=()=>{
+        err.textContent='';
+        const grade=gradeEl.value, tpl=tplEl.value.trim();
+        const rawFrom=String(fromEl.value).trim(), rawTo=String(toEl.value).trim();
+        if(!grade) return {err:'请选择所属年级'};
+        if(!tpl) return {err:'请填写名称模板'};
+        if(tpl.indexOf('{n}')<0) return {err:'名称模板必须包含 {n}（编号占位符）'};
+        if(!/^\d+$/.test(rawFrom)||!/^\d+$/.test(rawTo)) return {err:'起始与结束编号需为非负整数'};
+        const from=Number(rawFrom),to=Number(rawTo);
+        if(from>to) return {err:'起始编号不能大于结束编号'};
+        const count=to-from+1;
+        if(count>MAX_BATCH_CLASSES) return {err:'单次最多 '+MAX_BATCH_CLASSES+' 个班级，请缩小范围或分批添加'};
+        const names=[];
+        for(let n=from;n<=to;n++) names.push({name:tpl.replace(/\{n\}/g,String(n)),label:''});
+        names.forEach(x=>x.label=classLabel({name:x.name,grade}));
+        return {names,from,to,grade,tpl,count};
+      };
+      const refresh=()=>{
+        const b=build();
+        if(b.err){ err.textContent=b.err; preview.innerHTML='<span>请修正上方输入后预览</span>'; return; }
+        const labels=b.names.map(x=>x.label);
+        const exists=labels.filter(l=>DB.classes.some(c=>classLabel(c)===l)).length;
+        const head=labels.slice(0,3).join('、');
+        const tail=labels.length>4?(' … '+labels[labels.length-1]):(labels.length===4?'、'+labels[3]:'');
+        preview.innerHTML='<span>共 <b>'+b.count+'</b> 个：'+esc(head+tail)+
+          (exists?'<br>其中 <b>'+exists+'</b> 个已存在，生成时自动跳过':'')+'</span>';
+      };
+      gradeEl.onchange=()=>{
+        const g=gradeEl.value;
+        // 模板仍为「旧年级({n})班」时，随年级切换自动替换年级前缀
+        if(tplEl.value.trim()===lastGrade+'({n})班') tplEl.value=g+'({n})班';
+        lastGrade=g; refresh();
+      };
+      [tplEl,fromEl,toEl].forEach(el=>{
+        el.oninput=refresh; el.onchange=refresh;
+      });
+      root.querySelectorAll('[data-tpl]').forEach(btn=>btn.onclick=()=>{
+        tplEl.value=btn.dataset.tpl.replace('__G__',gradeEl.value);
+        refresh();
+      });
+      refresh();
+    },
+    onOk(root){
+      const q=s=>root.querySelector(s);
+      const gradeEl=q('#bc-grade'),tplEl=q('#bc-tpl'),fromEl=q('#bc-from'),toEl=q('#bc-to');
+      const err=q('#bc-err');
+      const grade=gradeEl.value, tpl=tplEl.value.trim();
+      const rawFrom=String(fromEl.value).trim(), rawTo=String(toEl.value).trim();
+      const fail=msg=>{ err.textContent=msg; return false; };
+      if(!grade) return fail('请选择所属年级');
+      if(!tpl||tpl.indexOf('{n}')<0) return fail('名称模板必须包含 {n}（编号占位符）');
+      if(!/^\d+$/.test(rawFrom)||!/^\d+$/.test(rawTo)) return fail('起始与结束编号需为非负整数');
+      const from=Number(rawFrom),to=Number(rawTo);
+      if(from>to) return fail('起始编号不能大于结束编号');
+      if(to-from+1>MAX_BATCH_CLASSES) return fail('单次最多 '+MAX_BATCH_CLASSES+' 个班级');
+      const seen=new Set(DB.classes.map(classLabel));   // 唯一性 = 年级 + 名称，与单个新增一致
+      const added=[],skipped=[];
+      for(let n=from;n<=to;n++){
+        const name=tpl.replace(/\{n\}/g,String(n));
+        const label=classLabel({name,grade});
+        if(seen.has(label)){ skipped.push(label); continue; }
+        seen.add(label);
+        DB.classes.push({id:uid(),name,grade});
+        added.push(label);
+      }
+      save('classes');
+      result={grade,added,skipped,from,to};
+      renderOrg();   // 立即刷新班级列表与所有班级下拉
+      return true;
+    }
+  }).then(ok=>{
+    if(!ok||!result) return;
+    const r=result;
+    toast('已新增 '+r.added.length+' 个班级'+(r.skipped.length?'，跳过 '+r.skipped.length+' 个已存在':''),'ok');
+    openModal({
+      title:'批量新增结果',hideOk:true,cancelText:'关闭',width:520,
+      body:'<p class="confirm-text">在 <b>'+esc(r.grade)+'</b> 下成功新增 <b>'+r.added.length+
+        '</b> 个班级'+(r.skipped.length?'，跳过 <b>'+r.skipped.length+'</b> 个已存在班级':'，无重复')+'。</p>'+
+        (r.added.length?'<pre class="log">'+esc('新增：\n'+r.added.join('\n'))+'</pre>':'')+
+        (r.skipped.length?'<pre class="log">'+esc('已存在（跳过）：\n'+r.skipped.join('\n'))+'</pre>':'')
+    });
+  });
+}
+
 /* ----- 组织与人员（仅管理员）：年级 / 班级 / 管理人员 ----- */
 function renderOrg(){
   const gradeOptions='<option value="">请选择年级</option>'+allGrades().map(g=>'<option value="'+esc(g)+'">'+esc(g)+'</option>').join('');
   const classOptions='<option value="">请选择班级</option>'+allClassesSorted().map(c=>
-    '<option value="'+esc(c.id)+'">'+esc(c.grade+' · '+c.name)+'</option>').join('');
+    '<option value="'+esc(c.id)+'">'+esc(classLabel(c))+'</option>').join('');
   const gradeRows=DB.grades.map(g=>{
     const n=DB.classes.filter(c=>c.grade===g).length;
     const s=DB.students.filter(x=>gradeOf(x)===g).length;
@@ -1041,14 +1370,17 @@ function renderOrg(){
   }).join('')||'<tr><td colspan="5" class="empty">暂无班级</td></tr>';
   const staffRows=DB.staff.map(s=>{
     const scope=s.role==='head'
-      ? '班级：'+((DB.classes.find(c=>c.id===s.classId)||{}).name||UNCLASSIFIED)
+      ? '班级：'+classLabel(DB.classes.find(c=>c.id===s.classId)||null)
       : '年级：'+(s.grade||'全校');
+    const contact=staffContactText(s);
     return '<tr><td>'+esc(s.username)+'</td><td>'+esc(s.name)+'</td><td><span class="badge '+
       (s.role==='leader'?'leader':'head')+'">'+esc(staffTitle(s))+'</span></td><td>'+esc(scope)+'</td>'+
-      '<td><div class="ops"><button class="btn ghost sm" data-spwd="'+esc(s.id)+'">改密</button>'+
+      '<td class="mgr-cell" style="white-space:normal">'+esc(contact)+'</td>'+
+      '<td><div class="ops"><button class="btn ghost sm" data-sprofile="'+esc(s.id)+'">资料</button>'+
+      '<button class="btn ghost sm" data-spwd="'+esc(s.id)+'">改密</button>'+
       '<button class="btn ghost sm" data-sscope="'+esc(s.id)+'">调整范围</button>'+
       '<button class="btn ghost sm" style="color:var(--danger)" data-delstaff="'+esc(s.id)+'">删除</button></div></td></tr>';
-  }).join('')||'<tr><td colspan="5" class="empty">暂无学校领导 / 班主任账号</td></tr>';
+  }).join('')||'<tr><td colspan="6" class="empty">暂无学校领导 / 班主任账号</td></tr>';
   const content=
     '<div class="card"><h2>年级管理</h2>'+
       '<div class="grid g2"><div class="field"><label>新增年级名称</label><input id="g-name" placeholder="如 高一"></div>'+
@@ -1058,12 +1390,17 @@ function renderOrg(){
       '<div class="err" id="g-err"></div>'+
       '<div class="table-scroll" style="margin-top:10px"><table><thead><tr><th>年级</th><th>班级数</th><th>学生数</th><th>操作</th></tr></thead>'+
       '<tbody>'+gradeRows+'</tbody></table></div></div>'+
-    '<div class="card"><h2>班级管理 <span class="tag">新增班级时选择所属年级</span></h2>'+
+    '<div class="card"><h2>班级管理 <span class="tag">按年级创建，不同年级可同名</span></h2>'+
       '<div class="grid g3">'+
-        '<div class="field"><label>班级名称</label><input id="c-name" placeholder="如 高一(1)班"></div>'+
+        '<div class="field"><label>班级名称（年级内唯一）</label><input id="c-name" placeholder="如 2班"></div>'+
         '<div class="field"><label>所属年级</label><select id="c-grade">'+gradeOptions+'</select></div>'+
-        '<div class="field"><label>&nbsp;</label><button class="btn primary" id="c-add">新增班级</button></div>'+
+        '<div class="field"><label>&nbsp;</label><div style="display:flex;gap:8px;flex-wrap:wrap">'+
+          '<button class="btn primary" id="c-add">新增班级</button>'+
+          '<button class="btn ghost" id="c-batch">批量新增（1~N班）</button>'+
+        '</div></div>'+
       '</div><div class="err" id="c-err"></div>'+
+      '<p class="hint" style="margin-top:8px">批量新增：模板「高一({n})班」+ 编号 1~10 可一次生成高一(1)班至高一(10)班，单次最多 200 个；已存在的班级自动跳过。</p>'+
+      '<p class="hint">班级按年级隔离：例如「高一 · 2班」与「高二 · 2班」可同时存在，同一年级内名称不可重复。</p>'+
       '<div class="table-scroll" style="margin-top:10px"><table><thead><tr><th>班级</th><th>年级</th><th>学生数</th><th>班主任</th><th>操作</th></tr></thead>'+
       '<tbody>'+classRows+'</tbody></table></div></div>'+
     '<div class="card"><h2>管理人员账号 <span class="tag">年级主任 / 教务处主任 / 班主任辅助管理</span></h2>'+
@@ -1079,15 +1416,18 @@ function renderOrg(){
         '<div class="field"><label>管辖班级（班主任必选）</label><select id="sf-class">'+classOptions+'</select></div>'+
         '<div class="field"><label>管辖年级（年级主任建议选，教务处主任可留空=全校）</label><select id="sf-grade"><option value="">全校</option>'+
           allGrades().map(g=>'<option value="'+esc(g)+'">'+esc(g)+'</option>').join('')+'</select></div>'+
-      '</div><div class="err" id="sf-err"></div>'+
+      '</div>'+
+      contactFormHtml()+
+      '<div class="err" id="sf-err"></div>'+
       '<button class="btn primary" id="sf-add">新增管理人员账号</button>'+
-      '<div class="table-scroll" style="margin-top:12px"><table><thead><tr><th>用户名</th><th>姓名</th><th>角色</th><th>管辖范围</th><th>操作</th></tr></thead>'+
+      '<div class="table-scroll" style="margin-top:12px"><table><thead><tr><th>用户名</th><th>姓名</th><th>角色</th><th>管辖范围</th><th>联系方式</th><th>操作</th></tr></thead>'+
       '<tbody>'+staffRows+'</tbody></table></div></div>'+
     '<div class="card"><h2>班主任查看权限 <span class="tag">管理员设置</span></h2>'+
       '<label class="chk" style="margin-bottom:10px"><input type="checkbox" id="set-headother"'+
         (headCanViewOtherCombo()?' checked':'')+'> 允许班主任查看其它选科的班级第一与年级第一</label>'+
       '<p class="hint">关闭：仅本班选科组合榜首；开启：全校全部选科组合榜首。</p></div>';
   mount(page('组织与人员','首页 / 组织与人员',content));
+  bindExtraRows(document);   // 初始化「自定义联系方式」可增删行
 
   // 权限开关即时保存，班主任端下次渲染即按新设置过滤
   $('set-headother').onchange=e=>{
@@ -1113,26 +1453,36 @@ function renderOrg(){
       '确定删除年级 <b>'+esc(g)+'</b> 吗？<br>该年级下有 <b>'+n+'</b> 个班级，其年级标记会改为「'+NO_GRADE+'」，成绩不会删除。','确认删除');
     if(!ok) return;
     DB.grades=DB.grades.filter(x=>x!==g);
-    DB.classes.forEach(c=>{ if(c.grade===g)c.grade=NO_GRADE; });
+    // 年级被移除后班级归入「未分组年级」；若已存在同名班级，加原年级前缀避免混淆
+    const unlabeled=DB.classes.filter(c=>c.grade===NO_GRADE);
+    DB.classes.forEach(c=>{
+      if(c.grade!==g)return;
+      if(unlabeled.some(x=>x!==c&&x.name===c.name)) c.name=g+' · '+c.name;
+      c.grade=NO_GRADE;
+    });
     DB.students.forEach(s=>{ if(s.grade===g)s.grade=NO_GRADE; });
     DB.staff.forEach(s=>{ if(s.grade===g)s.grade=''; });
     save('grades');save('classes');save('students');save('staff');
     toast('已删除年级','ok'); renderOrg();
   });
+  $('c-batch').onclick=openBatchClasses;
   $('c-add').onclick=()=>{
     const n=val('c-name'),g=val('c-grade');
     if(!n) return $('c-err').textContent='请输入班级名称';
     if(!g) return $('c-err').textContent='请选择所属年级';
-    if(DB.classes.some(c=>c.name===n)) return $('c-err').textContent='该班级名称已存在';
+    // 唯一性 = 年级 + 名称：同一年级内不可重名，不同年级允许同名班级
+    const label=classLabel({name:n,grade:g});
+    if(DB.classes.some(c=>classLabel(c)===label))
+      return $('c-err').textContent='班级「'+label+'」已存在；如需同名班级请选择其它年级';
     $('c-err').textContent='';
     DB.classes.push({id:uid(),name:n,grade:g}); save('classes');
-    toast('已新增班级','ok'); renderOrg();
+    toast('已新增班级 '+label,'ok'); renderOrg();
   };
   document.querySelectorAll('[data-delclass]').forEach(b=>b.onclick=async()=>{
     const id=b.dataset.delclass, c=DB.classes.find(x=>x.id===id); if(!c) return;
     const n=DB.students.filter(s=>classIdOf(s)===id).length;
     const ok=await confirmDialog('删除班级',
-      '确定删除班级 <b>'+esc(c.name)+'</b> 吗？<br>该班 <b>'+n+'</b> 名学生会被标记为「'+UNCLASSIFIED+'」，成绩记录保留；相关班主任账号需重新指定班级。','确认删除');
+      '确定删除班级 <b>'+esc(classLabel(c))+'</b> 吗？<br>该班 <b>'+n+'</b> 名学生会被标记为「'+UNCLASSIFIED+'」，成绩记录保留；相关班主任账号需重新指定班级。','确认删除');
     if(!ok) return;
     DB.classes=DB.classes.filter(x=>x.id!==id);
     DB.students.forEach(s=>{ if(s.classId===id){ s.classId=null;s.className=UNCLASSIFIED;s.grade=NO_GRADE; } });
@@ -1151,10 +1501,26 @@ function renderOrg(){
     if(role==='head'&&DB.staff.some(x=>x.role==='head'&&x.classId===cid))
       return $('sf-err').textContent='该班级已有班主任账号';
     $('sf-err').textContent='';
+    const contact=readContact(document);
     DB.staff.push({id:uid(),username:u,password:p,name:n,role,title,
-      classId:role==='head'?cid:null,grade:role==='leader'?g:''});
-    save('staff'); toast('已新增'+title+'账号','ok'); renderOrg();
+      classId:role==='head'?cid:null,grade:role==='leader'?g:'',contact});
+    save('staff'); toast('已新增'+title+'账号（含联系方式）','ok'); renderOrg();
   };
+  // 编辑资料：联系方式、自定义字段、备注
+  document.querySelectorAll('[data-sprofile]').forEach(b=>b.onclick=()=>{
+    const s=DB.staff.find(x=>x.id===b.dataset.sprofile); if(!s) return;
+    const c=staffContact(s);
+    openModal({
+      title:'编辑资料 · '+s.name,width:620,okText:'保存资料',
+      body:'<p class="hint">'+esc(staffTitle(s))+' ｜ 账号：'+esc(s.username)+'</p>'+
+        contactFormHtml(c)+'<div class="err" id="sp-err"></div>',
+      onOpen(root){ bindExtraRows(root,c.extra); },
+      onOk(root){
+        s.contact=readContact(root);
+        save('staff'); toast('资料已更新','ok'); renderOrg(); return true;
+      }
+    });
+  });
   document.querySelectorAll('[data-spwd]').forEach(b=>b.onclick=()=>{
     const s=DB.staff.find(x=>x.id===b.dataset.spwd); if(!s) return;
     openModal({
@@ -1174,7 +1540,7 @@ function renderOrg(){
   document.querySelectorAll('[data-sscope]').forEach(b=>b.onclick=()=>{
     const s=DB.staff.find(x=>x.id===b.dataset.sscope); if(!s) return;
     const cOpts='<option value="">请选择班级</option>'+allClassesSorted().map(c=>
-      '<option value="'+esc(c.id)+'"'+(c.id===s.classId?' selected':'')+'>'+esc(c.grade+' · '+c.name)+'</option>').join('');
+      '<option value="'+esc(c.id)+'"'+(c.id===s.classId?' selected':'')+'>'+esc(classLabel(c))+'</option>').join('');
     const gOpts='<option value="">全校</option>'+allGrades().map(g=>
       '<option value="'+esc(g)+'"'+(g===s.grade?' selected':'')+'>'+esc(g)+'</option>').join('');
     const tOpts=STAFF_TITLES.map(t=>{
@@ -1215,6 +1581,21 @@ function renderOrg(){
 }
 
 /* ----- 学生账号管理（admin 全部 / head 本班） ----- */
+/** 删除一个或多个学生账号，并清理其成绩 / 评语 / 查看申请 / 消息收件人 */
+function removeStudents(ids){
+  const set=new Set(ids);
+  DB.students=DB.students.filter(s=>!set.has(s.id));
+  DB.scores=DB.scores.filter(r=>!set.has(r.studentId));
+  DB.comments=DB.comments.filter(c=>!set.has(c.studentId));
+  DB.gradeRequests=DB.gradeRequests.filter(q=>!set.has(q.studentId)&&!set.has(q.targetId));
+  DB.messages.forEach(m=>{
+    m.recipients=(m.recipients||[]).filter(id=>!set.has(id));
+    m.readBy=(m.readBy||[]).filter(id=>!set.has(id));
+  });
+  DB.messages=DB.messages.filter(m=>m.recipients.length);
+  if(session&&session.role==='student'&&set.has(session.id)) LS.del('session');
+  save('students');save('scores');save('comments');save('messages');save('gradeRequests');
+}
 function comboPickerHtml(){
   return '<div class="chk-line" id="combo-box">'+
     ELECTIVES.map(s=>'<label class="chk" data-sub="'+s+'"><input type="checkbox" value="'+s+'">'+s+'</label>').join('')+
@@ -1252,17 +1633,22 @@ function renderAdminStudents(){
     '<button class="btn ghost" id="s-import">批量导入学生账号</button>':'';
   const classOptions='<option value="">请选择班级</option>'+allClassesSorted().map(c=>
     '<option value="'+esc(c.id)+'"'+(session.role==='head'&&c.id===session.classId?' selected':'')+'>'+
-      esc(c.grade+' · '+c.name)+'</option>').join('');
+      esc(classLabel(c))+'</option>').join('');
   const rows=list.map((s,i)=>{
     const mg=managersText(s);
-    return '<tr><td>'+(i+1)+'</td><td>'+esc(s.username)+'</td><td>'+esc(s.name)+'</td>'+
+    const search=(s.username+' '+s.name+' '+classNameOf(s)).toLowerCase();
+    return '<tr data-sid="'+esc(s.id)+'" data-cid="'+esc(classIdOf(s)||'')+'" data-search="'+esc(search)+'">'+
+      '<td><input type="checkbox" class="scheck" value="'+esc(s.id)+'" aria-label="选择 '+esc(s.name)+'"></td>'+
+      '<td>'+(i+1)+'</td><td>'+esc(s.username)+'</td><td>'+esc(s.name)+'</td>'+
     '<td>'+esc(classNameOf(s))+'</td><td>'+esc(gradeOf(s))+'</td><td><span class="badge soft">'+esc(comboName(s))+'</span></td>'+
     '<td class="mgr-cell"><span>班主任：</span>'+esc(mg.heads)+'<br><span>管理领导：</span>'+esc(mg.leaders)+'</td>'+
     '<td><div class="ops">'+
       '<button class="btn ghost sm" data-editstu="'+esc(s.id)+'">编辑</button>'+
       '<button class="btn ghost sm" data-pwd="'+esc(s.id)+'">修改密码</button>'+
       '<button class="btn ghost sm" style="color:var(--danger)" data-del="'+esc(s.id)+'">删除</button>'+
-    '</div></td></tr>';}).join('')||'<tr><td colspan="8" class="empty">暂无学生账号，请先新增或批量导入</td></tr>';
+    '</div></td></tr>';}).join('')||'<tr class="empty-row"><td colspan="9" class="empty">暂无学生账号，请先新增或批量导入</td></tr>';
+  const batchClassOpts='<option value="">按班级快速勾选…</option>'+allClassesSorted().map(c=>
+    '<option value="'+esc(c.id)+'">'+esc(classLabel(c))+'</option>').join('');
   const content=
     '<div class="card"><h2>新增学生账号 <span class="tag">'+(session.role==='head'?'仅本班':'可选任意班级')+'</span></h2>'+
       '<div class="grid g4">'+
@@ -1275,13 +1661,77 @@ function renderAdminStudents(){
       '<h3>选科组合</h3>'+comboPickerHtml()+
       '<div class="err" id="s-err"></div>'+
       '<div style="display:flex;gap:9px;flex-wrap:wrap"><button class="btn primary" id="s-add">新增账号</button>'+opsAdd+'</div>'+
-      '<p class="hint" style="margin-top:9px">批量导入格式：每行「用户名,密码,姓名,班级名称,选科1|选科2|选科3」，班级需已存在；支持中英文逗号或制表符、可带表头，重复用户名自动跳过。</p>'+
+      '<p class="hint" style="margin-top:9px">批量导入格式：每行「用户名,密码,姓名,班级,选科1|选科2|选科3」；不同年级有同名班级时写「年级 · 班级名」。班级需已存在，重复用户名自动跳过。</p>'+
     '</div>'+
-    '<div class="card"><h2>学生列表 <span class="tag">共 '+list.length+' 人</span></h2>'+
-      '<div class="table-scroll"><table><thead><tr><th>#</th><th>用户名</th><th>姓名</th><th>班级</th><th>年级</th><th>选科</th><th>班主任 / 管理领导</th><th>操作</th></tr></thead>'+
-      '<tbody>'+rows+'</tbody></table></div></div>';
+    '<div class="card"><h2>学生列表 <span class="tag">共 '+list.length+' 人'+(session.role==='head'?' · 仅本班':'')+'</span></h2>'+
+      '<div class="grid g3" style="margin-bottom:12px">'+
+        '<div class="field"><label>搜索（姓名 / 用户名 / 班级）</label><input id="s-search" placeholder="输入关键字筛选"></div>'+
+        '<div class="field"><label>按班级快速勾选</label><select id="s-batchclass">'+batchClassOpts+'</select></div>'+
+        '<div class="field"><label>&nbsp;</label><div style="display:flex;gap:8px;flex-wrap:wrap">'+
+          '<button class="btn ghost sm" id="s-checkall">全选当前显示</button>'+
+          '<button class="btn ghost sm" id="s-uncheckall">取消全选</button>'+
+          '<button class="btn danger sm" id="s-batchdel" disabled>批量删除（0）</button>'+
+        '</div></div>'+
+      '</div>'+
+      '<div class="err" id="s-batch-err"></div>'+
+      '<div class="table-scroll"><table><thead><tr><th>选择</th><th>#</th><th>用户名</th><th>姓名</th><th>班级</th><th>年级</th><th>选科</th><th>班主任 / 管理领导</th><th>操作</th></tr></thead>'+
+      '<tbody id="studentTableBody">'+rows+'</tbody></table></div></div>';
   mount(page('学生账号管理','首页 / 学生账号管理',content));
   bindComboPicker(document);
+  /* 批量勾选 / 搜索 / 删除交互 */
+  const tbody=$('studentTableBody');
+  const dataRows=()=>[...tbody.querySelectorAll('tr[data-sid]')];
+  const visibleRows=()=>dataRows().filter(tr=>tr.style.display!=='none');
+  const checkedIds=()=>visibleRows().filter(tr=>tr.querySelector('.scheck').checked).map(tr=>tr.dataset.sid);
+  const syncBatch=()=>{
+    const n=checkedIds().length;
+    const btn=$('s-batchdel');
+    btn.disabled=!n; btn.textContent='批量删除（'+n+'）';
+    $('s-batch-err').textContent='';
+  };
+  $('s-search').oninput=e=>{
+    const q=String(e.target.value).trim().toLowerCase();
+    dataRows().forEach(tr=>{ tr.style.display=(!q||tr.dataset.search.includes(q))?'':'none'; });
+    syncBatch();
+  };
+  $('s-checkall').onclick=()=>{ visibleRows().forEach(tr=>tr.querySelector('.scheck').checked=true); syncBatch(); };
+  $('s-uncheckall').onclick=()=>{ dataRows().forEach(tr=>tr.querySelector('.scheck').checked=false); syncBatch(); };
+  $('s-batchclass').onchange=e=>{
+    const cid=e.target.value;
+    if(cid) visibleRows().forEach(tr=>{ if(tr.dataset.cid===cid)tr.querySelector('.scheck').checked=true; });
+    syncBatch();
+  };
+  tbody.addEventListener('change',e=>{ if(e.target.classList.contains('scheck'))syncBatch(); });
+  $('s-batchdel').onclick=async()=>{
+    const ids=checkedIds().filter(id=>{ const s=stuOf(id); return s&&canEditStudent(s); });
+    if(!ids.length) return $('s-batch-err').textContent='没有可删除的学生账号';
+    const list2=ids.map(stuOf);
+    const sc=DB.scores.filter(r=>ids.includes(r.studentId)).length;
+    const cc=DB.comments.filter(c=>ids.includes(c.studentId)).length;
+    const qc=DB.gradeRequests.filter(q=>ids.includes(q.studentId)||ids.includes(q.targetId)).length;
+    const preview=list2.slice(0,10).map(s=>esc(s.name+'（'+s.username+'）')).join('、')+
+      (list2.length>10?' 等':'');
+    const ok1=await confirmDialog('第 1 次确认 · 批量删除学生账号',
+      '将删除 <b>'+list2.length+'</b> 个学生账号：'+preview+'<br>'+
+      '同时删除其 <b>'+sc+'</b> 条成绩、<b>'+cc+'</b> 条评语、<b>'+qc+'</b> 条成绩查看申请，并清理相关消息收件人。<br>'+
+      '该操作<b>不可恢复</b>。','我已确认，继续');
+    if(!ok1) return;
+    const ok2=await openModal({
+      title:'第 2 次确认 · 输入文字',width:420,okText:'确认批量删除',
+      body:'<p class="confirm-text">请输入 <b>删除</b> 两个字以确认执行。</p>'+
+        '<div class="field" style="margin-top:12px"><input id="bdel" placeholder="在此输入：删除"></div>'+
+        '<div class="err" id="bdel-err"></div>',
+      onOk(root){
+        if(root.querySelector('#bdel').value.trim()!=='删除'){
+          root.querySelector('#bdel-err').textContent='输入不正确，已取消删除'; return false; }
+        return true;
+      }
+    });
+    if(!ok2) return;
+    removeStudents(ids);
+    toast('已批量删除 '+ids.length+' 个学生账号','ok');
+    renderAdminStudents();
+  };
   // 选择班级后实时显示该班班主任及管理该年级的领导
   const syncManagers=()=>{ $('s-managers').innerHTML=managersBlockHtml(val('s-class')); };
   $('s-class').addEventListener('change',syncManagers);
@@ -1321,17 +1771,7 @@ function renderAdminStudents(){
     const ok=await confirmDialog('删除学生账号',
       '确定删除学生 <b>'+esc(s.name)+'（'+esc(s.username)+'）</b> 吗？<br>该生的 <b>'+n+'</b> 条成绩记录与相关评语也会一并删除，操作不可恢复。','确认删除');
     if(!ok) return;
-    DB.students=DB.students.filter(x=>x.id!==s.id);
-    DB.scores=DB.scores.filter(r=>r.studentId!==s.id);
-    DB.comments=DB.comments.filter(c=>c.studentId!==s.id);
-    DB.gradeRequests=DB.gradeRequests.filter(q=>q.studentId!==s.id&&q.targetId!==s.id);
-    DB.messages.forEach(m=>{
-      m.recipients=(m.recipients||[]).filter(id=>id!==s.id);
-      m.readBy=(m.readBy||[]).filter(id=>id!==s.id);
-    });
-    DB.messages=DB.messages.filter(m=>m.recipients.length);
-    if(session&&session.role==='student'&&session.id===s.id) LS.del('session');
-    save('students');save('scores');save('comments');save('messages');save('gradeRequests');
+    removeStudents([s.id]);
     toast('已删除学生及其成绩、评语、消息与申请','ok'); renderAdminStudents();
   });
 }
@@ -1339,7 +1779,7 @@ function renderAdminStudents(){
 function openEditStudent(id){
   const s=stuOf(id); if(!s||!canEditStudent(s)) return toast('权限不足','err');
   const classOptions=allClassesSorted().map(c=>'<option value="'+esc(c.id)+'"'+
-    (c.id===s.classId?' selected':'')+'>'+esc(c.grade+' · '+c.name)+'</option>').join('');
+    (c.id===s.classId?' selected':'')+'>'+esc(classLabel(c))+'</option>').join('');
   const combos=ELECTIVES.map(sub=>'<label class="chk" data-sub="'+sub+'"><input type="checkbox" value="'+sub+'"'+
     ((s.combo||[]).includes(sub)?' checked':'')+'>'+sub+'</label>').join('');
   openModal({
@@ -1374,7 +1814,7 @@ function openEditStudent(id){
       const combo=[...root.querySelectorAll('#combo-box input:checked')].map(i=>i.value);
       s.name=n; s.classId=cid||null; s.combo=combo;
       const c=DB.classes.find(x=>x.id===cid);
-      s.className=c?c.name:UNCLASSIFIED; s.grade=c?c.grade:NO_GRADE;
+      s.className=c?classLabel(c):UNCLASSIFIED; s.grade=c?c.grade:NO_GRADE;
       save('students'); toast('学生信息已更新','ok'); renderAdminStudents(); return true;
     }
   });
@@ -1463,8 +1903,10 @@ function collectScoreForm(p){
 }
 function renderAdminScores(){
   const readOnly=session.role==='leader';
-  const classOpts='<option value="">全部班级</option>'+allClassesSorted().map(c=>
-    '<option value="'+esc(c.name)+'"'+(scoreFilter.className===c.name?' selected':'')+'>'+esc(c.grade+' · '+c.name)+'</option>').join('');
+  const visibleIds=new Set(visibleStudents().map(classIdOf));
+  const classOpts='<option value="">全部班级</option>'+allClassesSorted()
+    .filter(c=>visibleIds.has(c.id)).map(c=>
+    '<option value="'+esc(c.id)+'"'+(scoreFilter.classId===c.id?' selected':'')+'>'+esc(classLabel(c))+'</option>').join('');
   const examOpts='<option value="">全部考试</option>'+allExams().map(e=>
     '<option value="'+esc(e)+'"'+(scoreFilter.exam===e?' selected':'')+'>'+esc(e)+'</option>').join('');
   const addCard=readOnly?'':
@@ -1502,15 +1944,15 @@ function renderAdminScores(){
     $('a-reset').onclick=()=>renderAdminScores();
     if($('a-import')) $('a-import').onclick=()=>openImportScores();
   }
-  $('f-class').onchange=e=>{ scoreFilter.className=e.target.value; refreshScoreTable(); };
+  $('f-class').onchange=e=>{ scoreFilter.classId=e.target.value; refreshScoreTable(); };
   $('f-exam').onchange=e=>{ scoreFilter.exam=e.target.value; refreshScoreTable(); };
-  $('f-clear').onclick=()=>{ scoreFilter={className:'',exam:''}; renderAdminScores(); };
+  $('f-clear').onclick=()=>{ scoreFilter={classId:'',exam:''}; renderAdminScores(); };
 }
 function filteredScores(){
   return DB.scores.filter(r=>{
     if(!visibleScore(r)) return false;
     const s=stuOf(r.studentId);
-    if(scoreFilter.className&&classNameOf(s)!==scoreFilter.className) return false;
+    if(scoreFilter.classId&&classIdOf(s)!==scoreFilter.classId) return false;
     if(scoreFilter.exam&&r.exam!==scoreFilter.exam) return false;
     return true;
   }).sort((a,b)=>b.date.localeCompare(a.date)||b.createdAt-a.createdAt);
@@ -1560,9 +2002,12 @@ async function delScore(id){
 
 /* ----- 统计分析：单科平均分/最高分/最低分 + 班级总分排名 ----- */
 function renderAdminStats(){
-  // 班级下拉只列当前角色可见范围内的班级
-  const visibleClassNames=[...new Set(visibleStudents().map(classNameOf))].sort();
-  const classOpts=visibleClassNames.map(n=>'<option value="'+esc(n)+'">'+esc(n)+'</option>').join('');
+  // 班级下拉只列当前角色可见范围内的班级，value 用班级 ID（不同年级可同名）
+  const visibleClassIds=[...new Set(visibleStudents().map(classIdOf))].filter(Boolean);
+  const classOpts=visibleClassIds.map(id=>{
+    const c=DB.classes.find(x=>x.id===id);
+    return '<option value="'+esc(id)+'">'+esc(classLabel(c))+'</option>';
+  }).join('');
   const examOpts='<option value="">全部考试</option>'+allExams().map(e=>'<option value="'+esc(e)+'">'+esc(e)+'</option>').join('');
   const batchOpts=allBatches().map(b=>'<option value="'+esc(b.exam+'|'+b.date)+'">'+esc(b.exam+' · '+b.date)+'</option>').join('')
     ||'<option value="">暂无考试批次</option>';
@@ -1583,7 +2028,7 @@ function renderAdminStats(){
     const list=DB.scores.filter(r=>{
       if(!visibleScore(r))return false;
       if(ex&&r.exam!==ex)return false;
-      if(cl&&classNameOf(stuOf(r.studentId)||{})!==cl)return false;
+      if(cl&&classIdOf(stuOf(r.studentId)||{})!==cl)return false;
       return true;
     });
     const rows=SUBJECTS.map(sub=>{
@@ -1602,7 +2047,8 @@ function renderAdminStats(){
     if(!b||!cl){ $('rk-result').innerHTML='<div class="empty">请先录入成绩并选择考试批次与班级</div>'; return; }
     const [exam,date]=b.split('|');
     const list=DB.scores.filter(r=>r.exam===exam&&r.date===date&&visibleScore(r)&&
-      classNameOf(stuOf(r.studentId)||{})===cl);
+      classIdOf(stuOf(r.studentId)||{})===cl);
+    const clLabel=classLabel(DB.classes.find(c=>c.id===cl)||null);
     if(!list.length){ $('rk-result').innerHTML='<div class="empty">该班级本次考试暂无可见成绩记录</div>'; return; }
     const best=new Map();
     list.forEach(r=>{ if(!best.has(r.studentId)||best.get(r.studentId).total<r.total)best.set(r.studentId,r); });
@@ -1613,7 +2059,7 @@ function renderAdminStats(){
       return '<tr><td><b>第 '+rank+' 名</b></td><td>'+esc(s.name||'-')+'</td><td>'+esc(s.username||'-')+'</td>'+
         '<td>'+esc(comboName(s))+'</td><td><b>'+fmtNum(r.total)+'</b></td></tr>';
     }).join('');
-    $('rk-result').innerHTML='<p class="hint" style="margin-bottom:10px">'+esc(exam+' · '+date+' · '+cl)+' ，共 '+sorted.length+' 人</p>'+
+    $('rk-result').innerHTML='<p class="hint" style="margin-bottom:10px">'+esc(exam+' · '+date+' · '+clLabel)+' ，共 '+sorted.length+' 人</p>'+
       '<div class="table-scroll"><table><thead><tr><th>名次</th><th>姓名</th><th>用户名</th><th>选科</th><th>总分</th></tr></thead><tbody>'+rows+'</tbody></table></div>';
   };
   $('st-exam').onchange=computeStats;$('st-class').onchange=computeStats;
@@ -1977,7 +2423,7 @@ function renderSubjectTop(){
     '<div class="card"><h2>筛选条件</h2><div class="grid g2">'+
       '<div class="field"><label>考试批次</label><select id="sp-batch">'+batchOpts+'</select></div>'+
       '<div class="field"><label>科目</label><select id="sp-subj">'+subjOpts+'</select></div>'+
-    '</div>'+(limited?'<p class="hint" style="margin-top:10px">仅显示本班学生'+(myClass?'（'+esc(myClass.name)+'）':'')+'。</p>':'')+'</div>'+
+    '</div>'+(limited?'<p class="hint" style="margin-top:10px">仅显示本班学生'+(myClass?'（'+esc(classLabel(myClass))+'）':'')+'。</p>':'')+'</div>'+
     '<div class="card"><h2>各班班级前十</h2><div id="sp-class"></div></div>'+
     '<div class="card"><h2>年级前五十</h2><div id="sp-grade"></div></div>';
   mount(page('单科榜单','首页 / 单科榜单',content));
@@ -1986,7 +2432,7 @@ function renderSubjectTop(){
     if(!b||!sub){ $('sp-class').innerHTML='<div class="empty">请先录入成绩</div>';$('sp-grade').innerHTML='<div class="empty">请先录入成绩</div>';return; }
     const [exam,date]=b.split('|');
     const d=subjectTopData(exam,date,sub);
-    const mine=x=>!limited||(myClass&&x.className===myClass.name);
+    const mine=x=>!limited||(myClass&&x.classId===myClass.id);
     const cRows=d.classTop.filter(mine);
     const gRows=d.gradeTop.filter(mine);
     $('sp-class').innerHTML='<p class="hint" style="margin-bottom:9px">'+esc(exam+' · '+date+' · '+sub)+
@@ -2169,7 +2615,7 @@ function renderAdminData(){
     ['staff','students','grades','classes','scores','comments','announcements','messages','gradeRequests']
       .forEach(k=>{ DB[k]=[];save(k); });
     DB.annRead={}; save('annRead');
-    LS.del('session'); session=null; scoreFilter={className:'',exam:''};
+    LS.del('session'); session=null; scoreFilter={classId:'',exam:''};
     toast('本地数据已清空，请重新登录','ok'); setHash('#/login');
   };
 }
@@ -2274,12 +2720,13 @@ function renderStudentComments(){
 
 /* ---------- ⑥ 批量导入 ---------- */
 function openImportStudents(){
-  const tpl='用户名,密码,姓名,班级,选科\n示例用户名,123456,示例姓名,高一(1)班,物理|化学|生物';
+  const sampleClass=DB.classes.length?classLabel(DB.classes[0]):'高一 · 2班';
+  const tpl='用户名,密码,姓名,班级,选科\n示例用户名,123456,示例姓名,'+sampleClass+',物理|化学|生物';
   let result=null;
   openModal({
     title:'批量导入学生账号',width:680,okText:'开始导入',
-    body:'<p class="hint">每行一条：<b>用户名,密码,姓名,班级名称,选科组合</b>；选科用 | 分隔（最多 3 科，可留空）。<br>'+
-      '班级名称需已在「组织与人员」中创建；支持中英文逗号 / 制表符；可含表头；重复用户名、班级不存在或越权班级会跳过并列出原因。</p>'+
+    body:'<p class="hint">每行一条：<b>用户名,密码,姓名,班级,选科组合</b>；选科用 | 分隔（最多 3 科，可留空）。<br>'+
+      '班级需已在「组织与人员」中创建；不同年级存在同名班级时，请写「年级 · 班级名」（如 高一 · 2班）。支持中英文逗号 / 制表符；可含表头。</p>'+
       '<textarea class="inp" id="imp" placeholder="'+esc(tpl)+'"></textarea>'+
       '<div style="margin-top:9px;display:flex;gap:9px;flex-wrap:wrap"><button class="btn ghost sm" id="imp-tpl">插入格式模板</button>'+
       '<span class="hint">模板中的班级与用户名请替换为真实数据。</span></div>',
@@ -2304,7 +2751,12 @@ function parseImportStudents(text){
     if(DB.students.some(s=>s.username===username)||DB.staff.some(s=>s.username===username)||
        (DB.admin&&DB.admin.username===username)){
       errors.push('第'+(i+1)+'行：用户名 '+username+' 已存在，跳过'); return; }
-    const cls=DB.classes.find(c=>c.name===cname);
+    const found=findClassByText(cname);
+    if(found.ambiguous.length){
+      errors.push('第'+(i+1)+'行：班级「'+cname+'」在多个年级存在，请写成「'+classLabel(found.ambiguous[0])+'」形式以指定年级');
+      return;
+    }
+    const cls=found.cls;
     if(!cls){ errors.push('第'+(i+1)+'行：找不到班级「'+cname+'」'); return; }
     if(session.role==='head'&&cls.id!==session.classId){ errors.push('第'+(i+1)+'行：班主任只能导入本班学生'); return; }
     const comboRaw=p[4]||'';
@@ -2313,7 +2765,7 @@ function parseImportStudents(text){
     if(badCombo){ errors.push('第'+(i+1)+'行：未知选科「'+badCombo+'」'); return; }
     if(combo.length>3){ errors.push('第'+(i+1)+'行：选科最多 3 科'); return; }
     added.push({id:uid(),username,password,name:name||username,classId:cls.id,
-      className:cls.name,grade:cls.grade,combo});
+      className:classLabel(cls),grade:cls.grade,combo,honors:[]});
   });
   DB.students.push(...added); save('students');
   return {added:added.length,errors};
@@ -2428,16 +2880,20 @@ function migrate(){
     if(s.classId===undefined){
       const old=s.className&&s.className!==UNCLASSIFIED?s.className:null;
       if(old){
-        let c=DB.classes.find(x=>x.name===old);
+        // 优先按完整标签匹配，再按「名称 + 年级」匹配，避免跨年级同名班级误合并
+        let c=DB.classes.find(x=>classLabel(x)===old)||
+              DB.classes.find(x=>x.name===old&&(!s.grade||x.grade===s.grade));
         if(!c){ c={id:uid(),name:old,grade:s.grade||NO_GRADE};DB.classes.push(c); }
         s.classId=c.id;
         if(!DB.grades.includes(c.grade))DB.grades.push(c.grade);
       }else s.classId=null;
     }
   });
-  // 旧管理人员补职务：旧 leader → 学校领导（通用），head → 班主任
+  // 旧管理人员补职务与联系方式结构：旧 leader → 学校领导（通用），head → 班主任
   DB.staff.forEach(s=>{
     if(!s.title) s.title=s.role==='head'?'班主任':'学校领导';
+    if(!s.contact||typeof s.contact!=='object') s.contact={};
+    if(!Array.isArray(s.contact.extra)) s.contact.extra=[];
   });
   // 旧成绩中选考科目若超过 100 分，仅做展示兼容、不改写数据
   // 统一落盘一次：既保存迁移结果，也为新增的 staff/grades/classes/comments/公告 建立键
