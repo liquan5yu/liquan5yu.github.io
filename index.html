@@ -145,7 +145,7 @@ td .ops{display:flex;gap:6px;flex-wrap:wrap}
 .exam-head .d{font-size:12px;color:var(--muted)}
 .exam-body{padding:14px 16px}
 .subj-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:9px}
-.subj{background:var(--gray);border-radius:8px;padding:8px;text-align:center}
+.subj{background:var(--gray);border:1px solid var(--line);border-radius:8px;padding:8px;text-align:center}
 .subj .n{font-size:12px;color:var(--muted)}
 .subj .s{font-size:17px;font-weight:800;color:var(--text)}
 .subj .s.none{color:#94a3b8;font-weight:500}
@@ -201,6 +201,24 @@ td .ops{display:flex;gap:6px;flex-wrap:wrap}
 .badge.cheat{background:var(--danger);color:#fff}
 .cheat-note{margin-top:10px;padding:9px 12px;background:#fff;border:1px solid var(--danger);
   border-radius:8px;color:var(--danger);font-size:13px;font-weight:700}
+/* 作弊科目：选择、标签与成绩格子逐科标注 */
+.cheat-sub-picks{display:flex;flex-wrap:wrap;gap:8px;margin-top:6px}
+.cheat-sub-picks label{display:inline-flex;align-items:center;gap:5px;border:1px solid var(--line);
+  border-radius:7px;padding:5px 10px;font-size:13px;cursor:pointer;background:#fff;user-select:none}
+.cheat-sub-picks label.on{border-color:var(--danger);background:var(--danger-bg);color:var(--danger);font-weight:700}
+.cheat-sub-picks input{accent-color:var(--danger)}
+.cheat-sub-tags{display:flex;flex-wrap:wrap;gap:5px;margin-top:5px}
+.cheat-sub-tag{display:inline-block;background:var(--danger);color:#fff;border-radius:5px;
+  padding:1px 7px;font-size:11px;font-weight:700;line-height:1.7}
+.cheat-sub-tag.all{background:#92400e}
+.badge.cheat{white-space:normal;line-height:1.5}
+/* 成绩卡片：被认定作弊的科目格子单独红框标注 */
+.subj.cheat-subj{border-color:var(--danger);background:var(--danger-bg);position:relative}
+.subj.cheat-subj .cheat-flag{position:absolute;top:-9px;right:-4px;background:var(--danger);color:#fff;
+  font-size:10px;font-weight:700;border-radius:5px;padding:1px 5px;white-space:nowrap}
+@media(max-width:600px){
+  .cheat-sub-picks label{font-size:12px;padding:5px 8px}
+}
 /* ============ 公告 ============ */
 .ann-item{border:1px solid var(--line);border-radius:9px;padding:11px 13px;margin-bottom:10px;background:#fff}
 .ann-item.force{background:var(--warn-bg);border-color:#fde68a}
@@ -273,7 +291,7 @@ pre.log{background:var(--gray);border:1px solid var(--line);border-radius:8px;pa
          成绩查看申请与班主任审批、学生端仅显示本人选科科目、班级管理人员查看、
          批量删除学生账号、管理人员联系方式与自定义信息、管理主页多维数据卡片、
          工作台实时时间与日期、考试预告（管理员发布批次与时间）、
-         作弊记录（管理员认定 / 班主任反馈 / 年级主任接收 / 学生端醒目标注）
+         作弊记录（管理员认定 / 班主任反馈 / 年级主任接收 / 按科目分别标注 / 学生端红框逐科显示）
    代码分区：① 存储与常量 ② 通用工具 ③ 业务计算与权限 ④ 路由与框架
              ⑤ 页面渲染 ⑥ 批量导入 ⑦ 图表 ⑧ 启动与数据迁移
    ===================================================================== */
@@ -299,7 +317,7 @@ const DB={
   messages:      LS.get('messages',[]),     // [{id,senderId,senderName,senderTitle,title,content,recipients,readBy,createdAt}]
   gradeRequests: LS.get('gradeRequests',[]),// 成绩查看申请 [{id,studentId,targetId,reason,status,createdAt,reviewedBy,reviewedAt,reply}]
   examNotices:   LS.get('examNotices',[]),  // 考试预告 [{id,exam,date,startTime,endTime,subjects,content,authorName,createdAt,updatedAt}]
-  cheating:      LS.get('cheating',[]),     // 作弊记录 [{id,studentId,exam,date,reason,source,status,reporterId,reporterName,reporterTitle,receivedBy,receivedName,receivedAt,createdAt}]
+  cheating:      LS.get('cheating',[]),     // 作弊记录 [{id,studentId,exam,date,reason,subjects:[科目]（空=整场）,source,status,reporterId,reporterName,reporterTitle,receivedBy,receivedName,receivedAt,createdAt}]
   settings:      LS.get('settings',{})      // {headOtherComboFirst:是否允许班主任查看其它选科榜首}
 };
 let session=LS.get('session',null);    // {role,title,username,id,name,classId,grade}
@@ -988,22 +1006,97 @@ function cheatSourceText(c){
   if(c.source==='admin') return '管理员认定';
   return '班主任反馈 · '+(c.receivedName?esc(c.receivedName)+' 接收':'待年级主任接收');
 }
-/** 学生端醒目红色警示块（已确认记录才显示） */
+/* ---------- 作弊「分科标注」：一条记录可指定具体科目，留空 = 整场考试 ---------- */
+/** 规范化科目数组（兼容旧数据：未记录科目时视为整场 / 未分科） */
+function cheatSubjects(c){
+  return Array.isArray(c&&c.subjects)?c.subjects.filter(s=>SUBJECTS.includes(s)):[];
+}
+/** 科目可读文本 */
+function cheatSubjectsText(c){
+  const arr=cheatSubjects(c);
+  return arr.length?arr.join('、'):'整场（未分科）';
+}
+/** 科目彩色标签（HTML）；整场记录用深色标签 */
+function cheatSubjectTagsHtml(c){
+  const arr=cheatSubjects(c);
+  return '<div class="cheat-sub-tags">'+
+    (arr.length?arr.map(s=>'<span class="cheat-sub-tag">'+esc(s)+'</span>').join('')
+      :'<span class="cheat-sub-tag all">整场 / 未分科</span>')+'</div>';
+}
+/** 科目多选组件：九科可勾选，留空表示整场考试；支持全选 / 清空 */
+function cheatSubjectPickerHtml(selected){
+  const sel=new Set(Array.isArray(selected)?selected:[]);
+  return '<div class="field" style="margin-top:12px">'+
+    '<label>作弊科目（可多选；不勾选 = 整场考试，全部科目标注）</label>'+
+    '<div class="cheat-sub-picks" id="cheat-sub-picks">'+
+      SUBJECTS.map(s=>'<label class="'+(sel.has(s)?'on':'')+'"><input type="checkbox" value="'+esc(s)+'"'+
+        (sel.has(s)?' checked':'')+'>'+esc(s)+'</label>').join('')+
+    '</div>'+
+    '<div class="chk-line" style="margin-top:8px">'+
+      '<button type="button" class="btn ghost sm" id="cheat-sub-all">全选九科</button>'+
+      '<button type="button" class="btn ghost sm" id="cheat-sub-clear">清空科目</button>'+
+    '</div></div>';
+}
+/** 绑定科目多选的高亮与快捷按钮（表单 / 弹窗复用） */
+function bindCheatSubjectPicker(root){
+  const box=root.querySelector('#cheat-sub-picks'); if(!box)return;
+  const sync=()=>box.querySelectorAll('label').forEach(l=>
+    l.classList.toggle('on',l.querySelector('input').checked));
+  box.addEventListener('change',sync);
+  const a=root.querySelector('#cheat-sub-all'),c=root.querySelector('#cheat-sub-clear');
+  if(a) a.onclick=()=>{ box.querySelectorAll('input').forEach(i=>i.checked=true); sync(); };
+  if(c) c.onclick=()=>{ box.querySelectorAll('input').forEach(i=>i.checked=false); sync(); };
+  sync();
+}
+function readCheatSubjects(root){
+  const box=root.querySelector('#cheat-sub-picks');
+  return box?[...box.querySelectorAll('input:checked')].map(i=>i.value):[];
+}
+/** 某次考试被认定作弊的科目集合；整场记录会展开为全部九科 */
+function cheatSubjectSet(stuId,exam,date){
+  const set=new Set(); let whole=false;
+  cheatingFor(stuId,exam,date).forEach(c=>{
+    const arr=cheatSubjects(c);
+    if(!arr.length) whole=true; else arr.forEach(s=>set.add(s));
+  });
+  if(whole) SUBJECTS.forEach(s=>set.add(s));
+  return set;
+}
+/** 学生账号列表用：合并该生所有已确认记录的科目标签 */
+function cheatStudentSubjectsHtml(stuId){
+  const list=confirmedCheating(stuId);
+  if(!list.length) return '<span class="badge soft">无</span>';
+  const subs=new Set(); let whole=false;
+  list.forEach(c=>{ const arr=cheatSubjects(c); if(!arr.length)whole=true; else arr.forEach(s=>subs.add(s)); });
+  const arr=[...subs];
+  return '<div class="cheat-sub-tags">'+
+    (whole?'<span class="cheat-sub-tag all">整场</span>':'')+
+    arr.slice(0,6).map(s=>'<span class="cheat-sub-tag">'+esc(s)+'</span>').join('')+
+    (arr.length>6?'<span class="cheat-sub-tag">…</span>':'')+
+    '</div><span class="hint">共 '+list.length+' 条</span>';
+}
+/** 学生端醒目红色警示块（已确认记录才显示，逐条列出作弊科目） */
 function cheatAlertHtml(stuId){
   const list=confirmedCheating(stuId);
   if(!list.length) return '';
   return '<div class="cheat-alert"><h2>⚠ 考试违纪 / 作弊记录（'+list.length+' 条）</h2>'+
     list.map(c=>'<div class="cheat-row"><b>'+esc(c.exam||'考试')+' · '+esc(c.date||'')+'</b>'+
       ' ｜ 认定方式：'+cheatSourceText(c)+
+      '<br>作弊科目：'+cheatSubjectTagsHtml(c)+
       '<br>情况说明：'+esc(c.reason||'—')+
       (c.reporterName?'<br>记录人：'+esc(c.reporterTitle?c.reporterTitle+' '+c.reporterName:c.reporterName):'')+
       '</div>').join('')+
-    '<div class="cheat-note">该记录将在你的成绩档案中醒目标注；如有异议请联系班主任或年级主任核实。</div></div>';
+    '<div class="cheat-note">该记录将在对应科目的成绩中逐科标注；如有异议请联系班主任或年级主任核实。</div></div>';
 }
-/** 成绩表格 / 成绩卡片上的违纪标记 */
+/** 成绩表格 / 违纪记录页的标注：直接列出具体作弊科目 */
 function cheatBadgeHtml(stuId,exam,date){
   const hit=cheatingFor(stuId,exam,date);
-  if(hit.length) return '<span class="badge cheat">⚠ 作弊 '+hit.length+'</span>';
+  if(hit.length){
+    const subs=new Set(); let whole=false;
+    hit.forEach(c=>{ const arr=cheatSubjects(c); if(!arr.length)whole=true; else arr.forEach(s=>subs.add(s)); });
+    const text=whole?'整场（全部科目）':[...subs].join('、');
+    return '<span class="badge cheat" title="作弊科目：'+esc(text)+'">⚠ '+esc(text)+'</span>';
+  }
   const pending=DB.cheating.filter(c=>c.studentId===stuId&&c.exam===exam&&c.date===date&&c.status==='pending');
   return pending.length?'<span class="badge gold">待接收</span>':'';
 }
@@ -1908,7 +2001,7 @@ function renderAdminStudents(){
       '<td>'+(i+1)+'</td><td>'+esc(s.username)+'</td><td>'+esc(s.name)+'</td>'+
     '<td>'+esc(classNameOf(s))+'</td><td>'+esc(gradeOf(s))+'</td><td><span class="badge soft">'+esc(comboName(s))+'</span></td>'+
     '<td class="mgr-cell"><span>班主任：</span>'+esc(mg.heads)+'<br><span>管理领导：</span>'+esc(mg.leaders)+'</td>'+
-    '<td>'+(confirmedCheating(s.id).length?'<span class="badge cheat">⚠ '+confirmedCheating(s.id).length+' 条</span>':'<span class="badge soft">无</span>')+'</td>'+
+    '<td style="white-space:normal">'+cheatStudentSubjectsHtml(s.id)+'</td>'+
     '<td><div class="ops">'+
       '<button class="btn ghost sm" data-editstu="'+esc(s.id)+'">编辑</button>'+
       '<button class="btn ghost sm" data-pwd="'+esc(s.id)+'">修改密码</button>'+
@@ -2258,20 +2351,23 @@ async function toggleScoreCheat(recId){
     save('cheating'); toast('已取消作弊认定','ok'); refreshScoreTable(); return;
   }
   openModal({
-    title:'认定成绩作弊 · '+(s.name||'学生'),width:520,okText:'确认标记',
+    title:'认定成绩作弊 · '+(s.name||'学生'),width:560,okText:'确认标记',
     body:'<p class="hint">考试：'+esc(rec.exam+' · '+rec.date)+' ｜ 总分：'+fmtNum(rec.total)+'</p>'+
       '<div class="field" style="margin-top:12px"><label>情况说明（必填）</label>'+
         '<textarea class="inp" id="sc-reason" placeholder="如：监考记录、违规情况说明"></textarea></div>'+
+      cheatSubjectPickerHtml()+
       '<div class="err" id="sc-err"></div>'+
-      '<p class="hint">认定后立即生效，并在该学生账号下醒目显示。</p>',
+      '<p class="hint">可勾选具体科目，学生成绩卡片会逐科红框标注；留空 = 整场考试。</p>',
+    onOpen(root){ bindCheatSubjectPicker(root); },
     onOk(root){
       const reason=root.querySelector('#sc-reason').value.trim();
       if(!reason){ root.querySelector('#sc-err').textContent='请填写情况说明'; return false; }
       DB.cheating.push({id:uid(),studentId:rec.studentId,exam:rec.exam,date:rec.date,reason,
+        subjects:readCheatSubjects(root),
         source:'admin',status:'confirmed',reporterId:session.id,
         reporterName:session.name||session.username,reporterTitle:'管理员',
         receivedBy:null,receivedName:'',receivedAt:null,createdAt:Date.now()});
-      save('cheating'); toast('已认定作弊并醒目标注','ok'); refreshScoreTable(); return true;
+      save('cheating'); toast('已认定作弊并逐科标注','ok'); refreshScoreTable(); return true;
     }
   });
 }
@@ -2650,6 +2746,7 @@ function renderCheating(){
       '</div>'+
       '<div class="field" style="margin-top:12px"><label>情况说明（必填）</label>'+
         '<textarea class="inp" id="ch-reason" placeholder="如：夹带资料、交头接耳，监考记录编号……"></textarea></div>'+
+      cheatSubjectPickerHtml()+
       '<div class="err" id="ch-err"></div>'+
       '<button class="btn primary" id="ch-add">'+(session.role==='admin'?'标记作弊并生效':'提交作弊反馈')+'</button>'+
     '</div>':'';
@@ -2670,20 +2767,22 @@ function renderCheating(){
     return '<tr><td><b>'+esc(s.name||'已删除学生')+'</b></td><td>'+esc(classNameOf(s))+'</td>'+
       '<td>'+esc(c.exam||'考试')+'</td><td>'+esc(c.date||'')+'</td>'+
       '<td>'+esc(c.source==='admin'?'管理员认定':'班主任反馈')+'</td><td>'+statusBadge+'</td>'+
+      '<td style="white-space:normal;min-width:130px">'+cheatSubjectTagsHtml(c)+'</td>'+
       '<td style="white-space:normal;min-width:180px">'+esc(c.reason||'—')+'</td>'+
       '<td>'+esc((c.reporterTitle?c.reporterTitle+' ':'')+(c.reporterName||'—'))+'</td>'+
       '<td>'+esc(c.receivedName||'—')+'</td>'+
       '<td><div class="ops">'+(ops.length?ops.join(''):'—')+'</div></td></tr>';
-  }).join('')||'<tr><td colspan="10" class="empty">暂无作弊 / 违纪记录</td></tr>';
+  }).join('')||'<tr><td colspan="11" class="empty">暂无作弊 / 违纪记录</td></tr>';
   const content=form+
     '<div class="card"><h2>作弊 / 违纪记录 <span class="tag">共 '+list.length+' 条'+
       (pendingCheatingCount()?' · 待接收 '+pendingCheatingCount()+' 条':'')+'</span></h2>'+
-      '<p class="hint" style="margin-bottom:10px">管理员可直接认定并生效；班主任反馈后需年级主任 / 教务处主任接收确认；'+
-        '只有已确认的记录才会在学生账号下醒目显示。班主任只能反馈本班，年级主任只能接收本年级权限内的反馈。</p>'+
+      '<p class="hint" style="margin-bottom:10px">可勾选具体作弊科目，学生成绩卡片会逐科红框标注；留空表示整场考试。'+
+        '管理员认定立即生效，班主任反馈需年级主任 / 教务处主任接收确认；只有已确认记录才会在学生账号下显示。</p>'+
       '<div class="table-scroll"><table><thead><tr><th>学生</th><th>班级</th><th>考试</th><th>日期</th>'+
-      '<th>来源</th><th>状态</th><th>情况说明</th><th>记录人</th><th>接收人</th><th>操作</th></tr></thead>'+
+      '<th>来源</th><th>状态</th><th>作弊科目</th><th>情况说明</th><th>记录人</th><th>接收人</th><th>操作</th></tr></thead>'+
       '<tbody>'+rows+'</tbody></table></div></div>';
   mount(page('作弊违纪记录','首页 / 作弊违纪记录',content));
+  if(canAdd) bindCheatSubjectPicker(document);   // 科目多选高亮与全选/清空
 
   if(canAdd){
     $('ch-batch').onchange=e=>{
@@ -2694,6 +2793,7 @@ function renderCheating(){
     };
     $('ch-add').onclick=()=>{
       const sid=val('ch-stu'),exam=val('ch-exam'),date=val('ch-date'),reason=$('ch-reason').value.trim();
+      const subjects=readCheatSubjects(document);
       if(!sid) return $('ch-err').textContent='请选择学生';
       if(!exam) return $('ch-err').textContent='请填写考试名称或选择考试批次';
       if(!/^\d{4}-\d{2}-\d{2}$/.test(date)) return $('ch-err').textContent='请选择考试日期';
@@ -2702,7 +2802,7 @@ function renderCheating(){
       if(!s||!visibleStudents().some(x=>x.id===sid)) return $('ch-err').textContent='权限不足：只能操作本班 / 权限内学生';
       $('ch-err').textContent='';
       const isAdmin=session.role==='admin';
-      DB.cheating.push({id:uid(),studentId:sid,exam,date,reason,
+      DB.cheating.push({id:uid(),studentId:sid,exam,date,reason,subjects,
         source:isAdmin?'admin':'head',status:isAdmin?'confirmed':'pending',
         reporterId:session.id,reporterName:session.name||session.username,
         reporterTitle:isAdmin?'管理员':(session.title||'班主任'),
@@ -2717,7 +2817,8 @@ function renderCheating(){
     const s=stuOf(c.studentId)||{};
     const ok=await confirmDialog('接收作弊反馈',
       '确认接收 <b>'+esc(s.name||'学生')+'</b> 在「'+esc(c.exam+' · '+c.date)+'」的作弊反馈吗？<br>'+
-      '接收后该记录<b>立即生效</b>，并会在学生账号下醒目标注。','确认接收');
+      '作弊科目：<b>'+esc(cheatSubjectsText(c))+'</b><br>'+
+      '接收后该记录<b>立即生效</b>，并会在学生对应科目成绩中逐科标注。','确认接收');
     if(!ok)return;
     c.status='confirmed'; c.receivedBy=session.id;
     c.receivedName=(session.title||ROLE_NAME[session.role]||'管理人员')+' '+(session.name||session.username);
@@ -3132,9 +3233,13 @@ function renderStudentHome(){
     const rk=classRank(r), gr=gradeComboRank(r), f=firstNames(r);
     // 只展示语数英 + 本人选考三科，不显示其他选科科目
     const shown=subjectsForStudent(me,r);
+    // 该次考试被认定作弊的科目集合：只有对应科目的格子会单独红框标注
+    const cheatSet=cheatSubjectSet(session.id,r.exam,r.date);
     const cells=shown.map(sub=>{
-      const v=r.scores[sub];
-      return '<div class="subj"><div class="n">'+sub+'<span class="hint">/'+maxOf(sub)+'</span></div>'+
+      const v=r.scores[sub], cheat=cheatSet.has(sub);
+      return '<div class="subj'+(cheat?' cheat-subj':'')+'">'+
+        (cheat?'<span class="cheat-flag">⚠ 作弊</span>':'')+
+        '<div class="n">'+sub+'<span class="hint">/'+maxOf(sub)+'</span></div>'+
         '<div class="s'+(typeof v==='number'?'':' none')+'">'+(typeof v==='number'?fmtNum(v):'未考')+'</div></div>';
     }).join('');
     const cmts=commentsFor(session.id,r.exam,r.date);
@@ -3143,8 +3248,10 @@ function renderStudentHome(){
       '<div class="txt">'+esc(c.content)+'</div></div>').join('');
     const cheatHit=cheatingFor(session.id,r.exam,r.date);
     const cheatHtml=cheatHit.length?
-      '<div class="cheat-note" style="margin:0 0 10px">⚠ 本次考试存在作弊 / 违纪记录：'+
-        cheatHit.map(c=>esc(c.reason||'—')+'（'+cheatSourceText(c)+'）').join('；')+'</div>':'';
+      '<div class="cheat-note" style="margin:0 0 10px">⚠ 本次考试作弊科目：'+
+        cheatHit.map(c=>'<b>'+esc(cheatSubjectsText(c))+'</b>').join('、')+
+        '<br><span style="font-weight:500">'+
+        cheatHit.map(c=>esc(c.reason||'—')+'（'+cheatSourceText(c)+'）').join('；')+'</span></div>':'';
     return '<div class="exam-card"'+(cheatHit.length?' style="border-color:var(--danger);border-width:2px"':'')+'>'+
       '<div class="exam-head"><div><span class="t">'+esc(r.exam)+'</span> <span class="d">'+esc(r.date)+'</span></div>'+
         '<div style="display:flex;gap:8px;flex-wrap:wrap">'+
@@ -3391,6 +3498,8 @@ function migrate(){
   // 旧版本没有「考试预告 / 作弊记录」键：初始化为空数组，避免读取时报错
   if(!Array.isArray(DB.examNotices)) DB.examNotices=[];
   if(!Array.isArray(DB.cheating)) DB.cheating=[];
+  // 旧版作弊记录没有「分科」字段：补为空数组，按「整场考试」展示，不丢失原有标注
+  DB.cheating.forEach(c=>{ if(!Array.isArray(c.subjects)) c.subjects=[]; });
   DB.students.forEach(s=>{
     if(!Array.isArray(s.combo)) s.combo=[];
     if(!Array.isArray(s.honors)) s.honors=[];   // 职称与奖项
