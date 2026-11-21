@@ -230,6 +230,43 @@ td .ops{display:flex;gap:6px;flex-wrap:wrap}
 .review-item .rv-head b{font-size:14px}
 .review-item .rv-meta{font-size:12px;color:var(--muted);line-height:1.9}
 .review-mini th,.review-mini td{padding:5px 8px;font-size:12px}
+/* ============ 系统维护 / 系统日志 / 密码重置 ============ */
+.maint-banner{padding:10px 14px;border-radius:9px;background:#fef3c7;border:1px solid #fcd34d;
+  color:#92400e;font-size:13px;font-weight:700;margin-bottom:14px;line-height:1.8}
+.maint-banner.dark{background:#fffbeb}
+.log-item{border:1px solid var(--line);border-radius:8px;padding:9px 12px;margin-bottom:8px;background:#fff;font-size:13px}
+.log-item .lg-head{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:3px}
+.log-item .lg-act{font-weight:700;color:var(--navy-dark)}
+.log-item .lg-detail{color:var(--text);line-height:1.7;word-break:break-word}
+.log-item .lg-meta{font-size:11px;color:var(--muted);margin-top:3px}
+.badge.cat{background:var(--gray);color:var(--muted);font-weight:600}
+.badge.cat.login{background:#e0e7ff;color:#3730a3}
+.badge.cat.audit{background:#fae8ff;color:#86198f}
+.badge.cat.account{background:#ecfeff;color:#0e7490}
+.badge.cat.maintain{background:#fef3c7;color:#92400e}
+.badge.cat.export{background:var(--ok-bg);color:var(--ok)}
+.badge.cat.security{background:#fee2e2;color:#991b1b}
+.check-row{display:flex;align-items:center;justify-content:space-between;gap:10px;
+  padding:9px 0;border-bottom:1px dashed var(--line);font-size:13px;flex-wrap:wrap}
+.check-row:last-child{border-bottom:none}
+.check-row.ok{color:var(--ok)}
+.check-row.warn{color:var(--danger)}
+.pwd-box{background:var(--navy-light);border:1px solid #c7d7f7;border-radius:9px;
+  padding:12px 14px;margin-bottom:14px;font-size:14px;line-height:1.9}
+.np{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:15px;
+  font-weight:800;color:var(--navy-dark);background:#fff;padding:2px 9px;border-radius:6px;
+  border:1px solid #c7d7f7;letter-spacing:1px}
+.pwd-box .np{font-size:18px}
+.reset-banner{border:2px solid #f59e0b;background:#fffbeb;border-radius:var(--radius);
+  padding:14px 16px;margin-bottom:16px;box-shadow:var(--shadow)}
+.reset-banner h2{font-size:16px;color:#92400e;margin-bottom:7px}
+.reset-banner .np{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:17px;
+  font-weight:800;color:#78350f;background:#fff;padding:2px 9px;border-radius:6px;border:1px solid #fcd34d}
+.stat.mini .v{font-size:17px}
+@media(max-width:600px){
+  .log-item{font-size:12px}
+  .pwd-box .np,.reset-banner .np{font-size:15px}
+}
 /* 成绩卡片：被认定作弊的科目格子单独红框标注 */
 .subj.cheat-subj{border-color:var(--danger);background:var(--danger-bg);position:relative}
 .subj.cheat-subj .cheat-flag{position:absolute;top:-9px;right:-4px;background:var(--danger);color:#fff;
@@ -310,7 +347,10 @@ pre.log{background:var(--gray);border:1px solid var(--line);border-radius:8px;pa
          批量删除学生账号、管理人员联系方式与自定义信息、管理主页多维数据卡片、
          工作台实时时间与日期、考试预告（管理员发布批次与时间）、
          作弊记录（管理员认定 / 班主任反馈 / 年级主任接收 / 按科目分别标注 / 学生端红框逐科显示）、
-         成绩审核（班主任新增 / 修改 / 删除均提交管理员或年级主任审核，未通过前学生端显示「成绩正在审核中」）
+         成绩审核（班主任新增 / 修改 / 删除均提交管理员或年级主任审核，未通过前学生端显示「成绩正在审核中」）、
+         系统维护（仅管理员：维护模式 / 存储概览 / 数据体检与一键修复 / 本地备份恢复 / 诊断包）、
+         密码重置申请（学生申请 → 班主任 / 年级主任 / 管理员处理，学生端醒目提示与查询入口）、
+         系统日志（save 兜底 + 关键动作精细记录：登录退出、页面访问、数据变更、审核、账号、维护、导出、安全事件）
    代码分区：① 存储与常量 ② 通用工具 ③ 业务计算与权限 ④ 路由与框架
              ⑤ 页面渲染 ⑥ 批量导入 ⑦ 图表 ⑧ 启动与数据迁移
    ===================================================================== */
@@ -337,7 +377,9 @@ const DB={
   gradeRequests: LS.get('gradeRequests',[]),// 成绩查看申请 [{id,studentId,targetId,reason,status,createdAt,reviewedBy,reviewedAt,reply}]
   examNotices:   LS.get('examNotices',[]),  // 考试预告 [{id,exam,date,startTime,endTime,subjects,content,authorName,createdAt,updatedAt}]
   cheating:      LS.get('cheating',[]),     // 作弊记录 [{id,studentId,exam,date,reason,subjects:[科目]（空=整场）,source,status,reporterId,reporterName,reporterTitle,receivedBy,receivedName,receivedAt,createdAt}]
-  settings:      LS.get('settings',{})      // {headOtherComboFirst:是否允许班主任查看其它选科榜首}
+  pwdResets:     LS.get('pwdResets',[]),    // 密码重置申请 [{id,studentId,username,name,reason,status,newPassword,note,createdAt,handledBy,handledName,handledTitle,handledAt,seenAt}]
+  logs:          LS.get('logs',[]),         // 系统日志 [{id,at,role,title,userId,userName,action,detail,cat}]
+  settings:      LS.get('settings',{})      // {headOtherComboFirst,maintenance:{enabled,message,since}}
 };
 let session=LS.get('session',null);    // {role,title,username,id,name,classId,grade}
 
@@ -359,11 +401,65 @@ let chartInst=null;
 let clockTimer=null;             // 工作台实时时钟定时器（切换页面时重建）
 let scoreFilter={classId:'',exam:''};
 
-function save(k){ LS.set(k,DB[k]); }
+/* ============ 系统日志：记录任何对系统的操作 ============
+   两层记录：① 所有业务数据写入由 save() 自动兜底记录「数据变更」；
+            ② 关键动作（登录、审核、重置密码、维护、导出等）用 logAct() 精细记录。
+   同一动作的兜底记录会在 400ms 内被精细记录自动合并，避免重复。日志本身直接写
+   LocalStorage，不再经过 save()，防止递归。 */
+const LOG_LIMIT=2000;                       // 日志保留上限，超出自动裁剪最旧记录
+const LOG_KEYS={admin:'管理员账号',staff:'管理人员账号',students:'学生账号',
+  grades:'年级',classes:'班级',scores:'成绩记录',comments:'评语',
+  announcements:'公告',messages:'消息通知',gradeRequests:'成绩查看申请',
+  examNotices:'考试预告',cheating:'作弊违纪记录',pwdResets:'密码重置申请',settings:'系统设置'};
+let logSuppress=0;        // >0 时暂停自动记录（数据迁移 / 批量恢复期间避免噪音）
+function actorInfo(){
+  if(!session) return {role:'visitor',title:'未登录用户',userId:'',userName:'访客'};
+  return {role:session.role,title:session.role==='admin'?'管理员':(session.title||ROLE_NAME[session.role]||'用户'),
+    userId:session.id||'',userName:session.name||session.username||''};
+}
+/** 写入一条日志；同一动作的「兜底数据变更」与「精细动作」自动合并，不重复 */
+function pushLog(action,detail,cat){
+  if(!Array.isArray(DB.logs)) DB.logs=[];
+  const a=actorInfo();
+  const item={id:uid(),at:Date.now(),role:a.role,title:a.title,userId:a.userId,
+    userName:a.userName,action:action||'操作',detail:detail||'',cat:cat||'数据'};
+  const last=DB.logs[DB.logs.length-1];
+  if(last){
+    const gap=item.at-last.at;
+    // 先 save 后 logAct：把兜底记录升级为精细描述
+    if(gap<400&&last.action==='数据变更'&&item.cat!=='数据'&&item.cat!=='访问'){
+      Object.assign(last,item);
+    }else if(gap<400&&action==='数据变更'&&last.action!=='数据变更'){
+      return;                              // 先 logAct 后 save：已有精细记录，跳过兜底
+    }else DB.logs.push(item);
+  }else DB.logs.push(item);
+  flushLogs();
+}
+function flushLogs(){
+  if(DB.logs.length>LOG_LIMIT) DB.logs=DB.logs.slice(-LOG_LIMIT);
+  try{ LS.set('logs',DB.logs); }
+  catch(e){ DB.logs=DB.logs.slice(-500); try{ LS.set('logs',DB.logs); }catch(_){} }
+}
+/** 显式记录关键动作；紧随其后的 save 不再重复记一条兜底 */
+function logAct(action,detail,cat){ pushLog(action,detail,cat||'数据'); }
+/** save() 兜底：任何业务数据变更留痕；session / annRead / logs 不记，避免噪音 */
+function save(k){
+  LS.set(k,DB[k]);
+  if(!logSuppress && LOG_KEYS[k]){
+    const last=DB.logs&&DB.logs[DB.logs.length-1];
+    // 同一批连续 save 只留一条，避免一次操作刷屏
+    if(!(last&&last.action==='数据变更'&&Date.now()-last.at<120&&last.detail===LOG_KEYS[k]))
+      pushLog('数据变更',LOG_KEYS[k]+'（'+k+'）已写入','数据');
+  }
+}
 function saveSession(){ LS.set('session',session); }
 // 权限设置默认值：班主任默认不可查看其它选科的班级第一 / 年级第一，需管理员显式开启
 if(!DB.settings||typeof DB.settings!=='object') DB.settings={};
 if(typeof DB.settings.headOtherComboFirst!=='boolean') DB.settings.headOtherComboFirst=false;
+if(!DB.settings.maintenance||typeof DB.settings.maintenance!=='object')
+  DB.settings.maintenance={enabled:false,message:'系统正在维护，请稍后再试。',since:null};
+/** 维护模式：开启后学生无法登录 / 继续访问，管理角色仍可进入以便关闭 */
+function maintenanceOn(){ return !!(DB.settings.maintenance&&DB.settings.maintenance.enabled); }
 
 /* ---------- ② 通用工具 ---------- */
 const uid=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,8);
@@ -1183,6 +1279,153 @@ function canReceiveCheat(c){
   return c.status==='pending'&&c.source==='head'&&(session.role==='admin'||session.role==='leader');
 }
 
+/* ================= ⑤-B 密码重置申请 / 系统维护 通用逻辑 ================= */
+/* ---------- 学生密码重置申请 ---------- */
+function pwdResetsFor(stuId){
+  return DB.pwdResets.filter(q=>q.studentId===stuId)
+    .sort((a,b)=>b.createdAt-a.createdAt);
+}
+/** 当前管理角色可见的重置申请：按可管理学生范围过滤（班主任仅本班） */
+function visiblePwdResets(){
+  const ids=new Set(visibleStudents().map(s=>s.id));
+  return DB.pwdResets.filter(q=>ids.has(q.studentId))
+    .sort((a,b)=>(a.status==='pending'?0:1)-(b.status==='pending'?0:1)||b.createdAt-a.createdAt);
+}
+function pendingPwdResetCount(){
+  return visiblePwdResets().filter(q=>q.status==='pending').length;
+}
+/** 学生端：最新一条「已重置但本人尚未查看」的申请，用于首页醒目横幅 */
+function unreadPwdReset(stuId){
+  return DB.pwdResets.find(q=>q.studentId===stuId&&q.status==='approved'&&!q.seenAt&&q.newPassword)||null;
+}
+function markPwdResetSeen(id){
+  const q=DB.pwdResets.find(x=>x.id===id); if(!q)return;
+  q.seenAt=Date.now(); save('pwdResets');
+  logAct('确认密码重置提示','学生已查看重置后的新密码','账号');
+}
+function canHandlePwdReset(q){
+  return visibleStudents().some(s=>s.id===q.studentId);
+}
+function genPassword(){
+  // 本地演示用随机密码：8 位，去掉易混淆字符
+  const chars='abcdefghjkmnpqrstuvwxyzABCDEFGHJKMNPQRSTUVWXYZ23456789';
+  let s=''; for(let i=0;i<8;i++) s+=chars[Math.floor(Math.random()*chars.length)];
+  return s;
+}
+/** 提交重置申请（登录页访客 / 学生端均可调用） */
+function submitPwdReset(username,reason){
+  const u=String(username||'').trim();
+  if(!u) return {ok:false,msg:'请输入学生用户名'};
+  const s=DB.students.find(x=>x.username===u);
+  if(!s) return {ok:false,msg:'未找到该学生用户名，请核对后重试'};
+  if(DB.pwdResets.some(q=>q.studentId===s.id&&q.status==='pending'))
+    return {ok:false,msg:'你已有待处理的重置申请，请勿重复提交'};
+  DB.pwdResets.push({id:uid(),studentId:s.id,username:s.username,name:s.name,
+    reason:String(reason||'').trim(),status:'pending',newPassword:'',note:'',
+    createdAt:Date.now(),handledBy:null,handledName:'',handledTitle:'',handledAt:null,seenAt:null});
+  save('pwdResets');
+  logAct('提交密码重置申请',s.name+'（'+s.username+'）申请重置登录密码','账号');
+  return {ok:true,msg:'申请已提交，请联系班主任 / 年级主任 / 管理员处理',name:s.name};
+}
+/** 登录页「查询处理结果」：仅按用户名展示本人申请状态，不泄露其他账号 */
+function pwdResetQueryHtml(username){
+  const u=String(username||'').trim();
+  if(!u) return '<div class="err">请输入学生用户名</div>';
+  const s=DB.students.find(x=>x.username===u);
+  if(!s) return '<div class="err">未找到该学生用户名</div>';
+  const list=pwdResetsFor(s.id);
+  if(!list.length) return '<div class="hint">该用户名暂无密码重置申请记录。</div>';
+  return list.slice(0,5).map(q=>{
+    const badge=q.status==='pending'?'<span class="badge pending">待处理</span>':
+      q.status==='approved'?'<span class="badge approved">已重置</span>':'<span class="badge rejected">已驳回</span>';
+    return '<div class="log-item"><div class="lg-head">'+badge+
+      '<span class="hint">'+esc(new Date(q.createdAt).toLocaleString())+'</span></div>'+
+      '<div class="lg-detail">'+
+        (q.status==='approved'
+          ? '密码已由 '+esc(q.handledTitle||'管理人员')+' '+esc(q.handledName||'')+' 重置为：<span class="np">'+esc(q.newPassword)+'</span>'
+          : q.status==='pending'?'申请正在等待管理人员处理，请稍后再查询。'
+          : '申请被驳回：'+esc(q.note||'无说明')+'，可重新提交申请。')+
+      '</div></div>';
+  }).join('');
+}
+
+/* ---------- 系统维护：存储占用 / 数据体检 / 修复 ---------- */
+function fmtBytes(n){ return n<1024?n+' B':(n/1024).toFixed(1)+' KB'; }
+/** 统计本系统在 LocalStorage 中的占用（含所有 hsgs_ 前缀键） */
+function storageUsage(){
+  const rows=[];
+  for(let i=0;i<localStorage.length;i++){
+    const k=localStorage.key(i);
+    if(!k||!k.startsWith(PREFIX))continue;
+    const raw=localStorage.getItem(k)||'';
+    rows.push({key:k.slice(PREFIX.length),bytes:raw.length});
+  }
+  return rows.sort((a,b)=>b.bytes-a.bytes);
+}
+/** 数据体检：找出孤立记录、缺失字段、越界引用 */
+function systemCheck(){
+  const stuIds=new Set(DB.students.map(s=>s.id));
+  const clsIds=new Set(DB.classes.map(c=>c.id));
+  const gradeSet=new Set(DB.grades);
+  const issues=[];
+  const orphan=(name,arr,field)=>{
+    const n=arr.filter(x=>!stuIds.has(x[field])).length;
+    if(n) issues.push({key:name+'Orphan',label:name+'指向已删除学生',count:n});
+  };
+  orphan('成绩',DB.scores,'studentId');
+  orphan('评语',DB.comments,'studentId');
+  orphan('作弊记录',DB.cheating,'studentId');
+  orphan('成绩查看申请',DB.gradeRequests,'studentId');
+  orphan('密码重置申请',DB.pwdResets,'studentId');
+  const orphanReq=DB.gradeRequests.filter(x=>!stuIds.has(x.targetId)).length;
+  if(orphanReq) issues.push({key:'reqTarget',label:'成绩查看申请的目标学生已删除',count:orphanReq});
+  const badClass=DB.students.filter(s=>s.classId&&!clsIds.has(s.classId)).length;
+  if(badClass) issues.push({key:'badClass',label:'学生指向不存在的班级',count:badClass});
+  const badGrade=DB.classes.filter(c=>!gradeSet.has(c.grade)).length;
+  if(badGrade) issues.push({key:'badGrade',label:'班级年级未登记在年级表',count:badGrade});
+  const noStatus=DB.scores.filter(r=>!r.status).length;
+  if(noStatus) issues.push({key:'noStatus',label:'成绩缺少审核状态字段',count:noStatus});
+  const noCombo=DB.students.filter(s=>!Array.isArray(s.combo)).length;
+  if(noCombo) issues.push({key:'noCombo',label:'学生缺少选科字段',count:noCombo});
+  const logOver=DB.logs.length>LOG_LIMIT?DB.logs.length-LOG_LIMIT:0;
+  if(logOver) issues.push({key:'logOver',label:'系统日志超出保留上限',count:logOver});
+  return issues;
+}
+/** 一键修复：清理孤立记录、补齐缺失字段、裁剪日志 */
+function systemRepair(){
+  const stuIds=new Set(DB.students.map(s=>s.id));
+  const clsIds=new Set(DB.classes.map(c=>c.id));
+  let fixed=0;
+  const clean=(key,field)=>{
+    const before=DB[key].length;
+    DB[key]=DB[key].filter(x=>stuIds.has(x[field]));
+    if(before!==DB[key].length){ fixed+=before-DB[key].length; save(key); }
+  };
+  ['scores','comments','cheating','pwdResets'].forEach(k=>clean(k,'studentId'));
+  clean('gradeRequests','studentId');
+  const b2=DB.gradeRequests.length;
+  DB.gradeRequests=DB.gradeRequests.filter(x=>stuIds.has(x.targetId));
+  if(b2!==DB.gradeRequests.length){ fixed+=b2-DB.gradeRequests.length; save('gradeRequests'); }
+  DB.students.forEach(s=>{
+    if(s.classId&&!clsIds.has(s.classId)){ s.classId=null; fixed++; }
+    if(!Array.isArray(s.combo)){ s.combo=[]; fixed++; }
+    if(!Array.isArray(s.honors)){ s.honors=[]; fixed++; }
+  });
+  save('students');
+  DB.classes.forEach(c=>{ if(!DB.grades.includes(c.grade)){ DB.grades.push(c.grade); fixed++; } });
+  save('grades');
+  DB.scores.forEach(r=>{
+    if(!r.status){ r.status='approved'; fixed++; }
+    if(r.pendingEdit===undefined){ r.pendingEdit=null; fixed++; }
+    if(r.pendingDelete===undefined){ r.pendingDelete=null; fixed++; }
+  });
+  save('scores');
+  if(DB.logs.length>LOG_LIMIT){ fixed+=DB.logs.length-LOG_LIMIT;
+    DB.logs=DB.logs.slice(-LOG_LIMIT); LS.set('logs',DB.logs); }
+  logAct('数据体检一键修复','共修复 '+fixed+' 处异常数据','维护');
+  return fixed;
+}
+
 /* ---------- ④ 路由与框架 ---------- */
 const ROUTES={
   '#/login':            {auth:null,                       render:renderLogin},
@@ -1203,6 +1446,9 @@ const ROUTES={
   '#/requests':         {auth:['admin','leader','head'], render:renderRequests,     crumb:'首页 / 成绩查看申请',  title:'成绩查看申请'},
   '#/org':              {auth:['admin'],                 render:renderOrg,          crumb:'首页 / 组织与人员',     title:'组织与人员'},
   '#/data':             {auth:['admin'],                 render:renderAdminData,    crumb:'首页 / 数据管理',      title:'数据管理'},
+  '#/logs':             {auth:['admin'],                 render:renderLogs,         crumb:'首页 / 系统日志',      title:'系统日志'},
+  '#/maintenance':      {auth:['admin'],                 render:renderMaintenance,  crumb:'首页 / 系统维护',      title:'系统维护'},
+  '#/pwd-resets':       {auth:['admin','leader','head'],render:renderPwdResets,    crumb:'首页 / 密码重置申请',  title:'密码重置申请'},
   '#/exam-notices':     {auth:['admin','leader','head','student'],render:renderExamNotices,crumb:'首页 / 考试预告',  title:'考试预告'},
   '#/cheating':         {auth:['admin','leader','head'], render:renderCheating,    crumb:'首页 / 作弊违纪记录',  title:'作弊违纪记录'},
   '#/student':          {auth:['student'],               render:renderStudentHome,  crumb:'首页 / 我的成绩',      title:'我的成绩'},
@@ -1211,7 +1457,8 @@ const ROUTES={
   '#/messages':         {auth:['student'],               render:renderStudentMessages,crumb:'首页 / 消息通知',     title:'消息通知'},
   '#/student/honors':   {auth:['student'],               render:renderStudentHonors,crumb:'首页 / 我的职称奖项',  title:'我的职称奖项'},
   '#/student/requests': {auth:['student'],               render:renderStudentRequests,crumb:'首页 / 成绩查看申请',title:'成绩查看申请'},
-  '#/student/cheating': {auth:['student'],               render:renderStudentCheating,crumb:'首页 / 我的违纪记录',title:'我的违纪记录'}
+  '#/student/cheating': {auth:['student'],               render:renderStudentCheating,crumb:'首页 / 我的违纪记录',title:'我的违纪记录'},
+  '#/student/pwd-reset':{auth:['student'],               render:renderStudentPwdReset,crumb:'首页 / 密码重置',   title:'密码重置'}
 };
 function navItems(role){
   const sets={
@@ -1219,28 +1466,34 @@ function navItems(role){
            ['#/ranking','选科排名'],['#/subject-top','单科榜单'],['#/comments','评语管理'],
            ['#/announcements','公告管理'],['#/exam-notices','考试预告'],['#/cheating','作弊记录'],
            ['#/message-send','发送消息'],['#/honors','职称奖项'],
-           ['#/requests','查看申请'],['#/org','组织与人员'],['#/data','数据管理']],
+           ['#/requests','查看申请'],['#/pwd-resets','密码重置申请'],['#/org','组织与人员'],
+           ['#/data','数据管理'],['#/logs','系统日志'],['#/maintenance','系统维护']],
     leader:[['#/leader','总览'],['#/scores','成绩查看'],['#/score-reviews','成绩审核'],['#/stats','统计分析'],['#/ranking','选科排名'],
             ['#/subject-top','单科榜单'],['#/comments','评语管理'],['#/announcements','公告查看'],
             ['#/exam-notices','考试预告'],['#/cheating','作弊反馈'],
-            ['#/message-send','发送消息'],['#/honors','职称奖项'],['#/requests','查看申请']],
+            ['#/message-send','发送消息'],['#/honors','职称奖项'],['#/requests','查看申请'],
+            ['#/pwd-resets','密码重置申请']],
     head:[['#/head','总览'],['#/head/report','班级成绩单'],['#/students','本班学生'],['#/scores','本班成绩'],['#/score-reviews','审核状态'],
           ['#/stats','统计分析'],['#/ranking','选科排名'],['#/subject-top','单科榜单'],
           ['#/comments','评语管理'],['#/announcements','公告查看'],['#/exam-notices','考试预告'],
           ['#/cheating','作弊反馈'],['#/message-send','发送消息'],
-          ['#/honors','职称奖项'],['#/requests','申请审批']],
+          ['#/honors','职称奖项'],['#/requests','申请审批'],['#/pwd-resets','密码重置申请']],
     student:[['#/student','我的成绩'],['#/student/trend','总分趋势'],['#/student/comments','我的评语'],
              ['#/messages','消息通知'],['#/student/honors','我的奖项'],['#/student/requests','成绩查看申请'],
-             ['#/exam-notices','考试预告'],['#/student/cheating','违纪记录']]
+             ['#/exam-notices','考试预告'],['#/student/cheating','违纪记录'],['#/student/pwd-reset','密码重置']]
   };
   return (sets[role]||[]).map(([h,t])=>{
     const unread=(h==='#/messages')?unreadMessageCount():0;
     const cheatN=(h==='#/student/cheating'&&session&&session.role==='student')?confirmedCheating(session.id).length:0;
     const rvN=(h==='#/score-reviews'&&session&&canReviewScore())?pendingReviewCount():0;
+    const prN=(h==='#/pwd-resets'&&session)?pendingPwdResetCount():0;
+    const prU=(h==='#/student/pwd-reset'&&session&&session.role==='student'&&unreadPwdReset(session.id))?1:0;
     return '<a href="'+h+'" class="'+(location.hash===h?'active':'')+'">'+t+
       (unread?' <span class="badge gold">'+unread+'</span>':'')+
       (cheatN?' <span class="badge cheat">'+cheatN+'</span>':'')+
-      (rvN?' <span class="badge pending">'+rvN+'</span>':'')+'</a>';
+      (rvN?' <span class="badge pending">'+rvN+'</span>':'')+
+      (prN?' <span class="badge pending">'+prN+'</span>':'')+
+      (prU?' <span class="badge gold">新密码</span>':'')+'</a>';
   }).join('');
 }
 /** 页面外壳：导航栏 + 角色标识 + 面包屑 */
@@ -1258,6 +1511,8 @@ function shell(title,crumb,content,role){
       '<button class="btn ghost sm" data-act="logout">退出登录</button></div>'+
   '</header>'+
   '<div class="wrap">'+
+    (maintenanceOn()?'<div class="maint-banner">🛠 系统维护模式已开启 ｜ '+esc(DB.settings.maintenance.message||'请稍后再试')+
+      (role==='admin'?' ｜ <a href="#/maintenance">前往系统维护关闭 →</a>':'')+'</div>':'')+
     '<div class="crumb">当前位置：<b>'+esc(crumb)+'</b></div>'+
     '<div class="pagehead"><h1>'+esc(title)+'</h1></div>'+
     '<main>'+content+'</main>'+
@@ -1266,6 +1521,7 @@ function shell(title,crumb,content,role){
 }
 function page(title,crumb,content){ return shell(title,crumb,content,session.role); }
 
+let lastNavLog={key:'',at:0};
 function route(){
   chartInst&&(chartInst.destroy(),chartInst=null);
   let hash=location.hash||'#/login';
@@ -1276,7 +1532,13 @@ function route(){
   }
   // 2) 校验会话有效性（账号删除、管辖范围变更）
   validateSession();
-  // 3) 已初始化：初始化页永久隐藏，手动输入该 hash 也直接回登录/首页
+  // 3) 维护模式：学生账号被临时拦截，管理角色仍可进入以便关闭维护
+  if(maintenanceOn()&&session&&session.role==='student'){
+    logAct('维护模式拦截','学生 '+(session.name||session.username)+' 访问被维护模式拦截','维护');
+    LS.del('session'); session=null;
+    toast('系统维护中，请稍后再试','err'); setHash('#/login'); return;
+  }
+  // 4) 已初始化：初始化页永久隐藏，手动输入该 hash 也直接回登录/首页
   if(hash==='#/init'){ setHash(session?homeHash():'#/login'); return; }
   const r=ROUTES[hash];
   if(!r){ render404(hash); return; }                          // 404 提示
@@ -1288,6 +1550,14 @@ function route(){
   }
   if(hash==='#/login'&&session){ setHash(homeHash()); return; }
   r.render();
+  // 页面访问留痕：同一用户同一页面 3 秒内不重复，避免跳转递归刷屏
+  if(session&&hash!=='#/login'){
+    const nk=session.id+'|'+hash;
+    if(nk!==lastNavLog.key||Date.now()-lastNavLog.at>3000){
+      lastNavLog={key:nk,at:Date.now()};
+      pushLog('访问页面',r.title||hash,'访问');
+    }
+  }
   // 登录后逐条弹出未读的强制公告（已读记录以用户+公告版本号为准）
   if(session&&hash!=='#/login') showForcedAnnouncements();
 }
@@ -1308,7 +1578,10 @@ function validateSession(){
     session.name=s.name; saveSession();
   }
 }
-function doLogout(){ LS.del('session'); session=null; toast('已退出登录','ok'); setHash('#/login'); }
+function doLogout(){
+  logAct('退出登录',(session?(session.name||session.username):'')+' 退出系统','登录');
+  LS.del('session'); session=null; toast('已退出登录','ok'); setHash('#/login');
+}
 document.addEventListener('click',e=>{
   const b=e.target.closest('[data-act]');
   if(b&&b.dataset.act==='logout') doLogout();
@@ -1343,6 +1616,7 @@ function renderInit(){
     if(p!==p2) return $('i-err').textContent='两次输入的密码不一致';
     $('i-err').textContent='';
     DB.admin={username:u,password:p}; save('admin');
+    logAct('管理员初始化','创建管理员账号 '+u,'账号');
     toast('初始化完成，请登录','ok'); setHash('#/login');
   };
   $('i-submit').onclick=submit;
@@ -1363,32 +1637,72 @@ function renderLogin(){
       '<option value="head">班主任</option><option value="student">学生</option></select></div>'+
     '<div class="err" id="l-err"></div>'+
     '<button class="btn primary block" id="l-submit">登 录</button>'+
+    '<button class="btn ghost block" id="l-forgot" style="margin-top:10px">忘记密码 / 申请重置</button>'+
     '<div class="auth-foot">本系统为本地浏览器存储，清除浏览器缓存会丢失数据，建议管理员定期备份。</div>'+
   '</div></div>');
+  const fail=(msg,role)=>{
+    logAct('登录失败','用户名 '+val('l-user')+' · 角色 '+(role||val('l-role'))+'：'+msg,'安全');
+    $('l-err').textContent=msg;
+  };
   const submit=()=>{
     const u=val('l-user'),p=$('l-pwd').value,sel=val('l-role');
     if(!u||!p) return $('l-err').textContent='请输入用户名和密码';
     const [role,wantedTitle]=sel.split(':');
+    // 维护模式：学生暂停登录，管理角色仍可进入以便关闭维护
+    if(role==='student'&&maintenanceOn()){
+      logAct('维护模式拦截','学生 '+u+' 登录被维护模式拦截','维护');
+      return $('l-err').textContent=DB.settings.maintenance.message||'系统正在维护，请稍后再试。';
+    }
     if(role==='admin'){
       if(!DB.admin||DB.admin.username!==u||DB.admin.password!==p)
-        return $('l-err').textContent='管理员账号或密码错误（角色不匹配也无法登录）';
+        return fail('管理员账号或密码错误（角色不匹配也无法登录）',sel);
       session={role:'admin',username:u,id:'admin',name:u};
     }else if(role==='leader'||role==='head'){
       const s=DB.staff.find(x=>x.username===u&&x.password===p&&x.role===role&&
         (!wantedTitle||staffTitle(x)===wantedTitle));
-      if(!s) return $('l-err').textContent=(wantedTitle||ROLE_NAME[role])+'账号或密码错误（角色不匹配也无法登录）';
+      if(!s) return fail((wantedTitle||ROLE_NAME[role])+'账号或密码错误（角色不匹配也无法登录）',sel);
       session={role,title:staffTitle(s),username:u,id:s.id,name:s.name,
         classId:s.classId||null,grade:s.grade||''};
     }else{
       const s=DB.students.find(x=>x.username===u&&x.password===p);
-      if(!s) return $('l-err').textContent='学生账号或密码错误（角色不匹配也无法登录）';
+      if(!s) return fail('学生账号或密码错误（角色不匹配也无法登录）',sel);
       session={role:'student',username:u,id:s.id,name:s.name};
     }
     saveSession(); $('l-err').textContent='';
+    logAct('登录系统',(session.title||ROLE_NAME[session.role]||'用户')+' '+
+      (session.name||session.username)+' 登录成功','登录');
     toast('登录成功','ok'); setHash(homeHash());
   };
   $('l-submit').onclick=submit;
+  $('l-forgot').onclick=openForgotPwd;
   ['l-user','l-pwd'].forEach(id=>$(id).addEventListener('keydown',e=>{ if(e.key==='Enter')submit(); }));
+}
+/** 登录页「忘记密码」：提交重置申请 + 按用户名查询处理结果（含重置后的新密码） */
+function openForgotPwd(){
+  openModal({
+    title:'忘记密码 · 申请重置',width:560,hideOk:true,cancelText:'关闭',
+    body:'<p class="hint">输入学生用户名提交重置申请，由 <b>班主任 / 年级主任 / 管理员</b> 处理后生效；'+
+      '也可随时在此查询处理结果与新密码。本系统为本地浏览器存储，请勿使用真实敏感密码。</p>'+
+      '<div class="field"><label>学生用户名</label><input id="fp-user" autocomplete="off" placeholder="请输入学生用户名"></div>'+
+      '<div class="field" style="margin-top:10px"><label>申请说明（可选）</label>'+
+        '<input id="fp-reason" placeholder="如：忘记登录密码，申请重置"></div>'+
+      '<div style="display:flex;gap:9px;flex-wrap:wrap;margin-top:12px">'+
+        '<button type="button" class="btn primary sm" id="fp-submit">提交重置申请</button>'+
+        '<button type="button" class="btn ghost sm" id="fp-query">查询处理结果</button>'+
+      '</div><div id="fp-result" style="margin-top:12px"></div>',
+    onOpen(root){
+      root.querySelector('#fp-user').value=val('l-user')||'';
+      root.querySelector('#fp-submit').onclick=()=>{
+        const r=submitPwdReset(root.querySelector('#fp-user').value,root.querySelector('#fp-reason').value);
+        root.querySelector('#fp-result').innerHTML='<div class="'+(r.ok?'pwd-box':'err')+'">'+
+          esc(r.msg)+(r.ok?'<br>处理完成后回到本页点「查询处理结果」即可查看新密码。':'')+'</div>';
+      };
+      root.querySelector('#fp-query').onclick=()=>{
+        root.querySelector('#fp-result').innerHTML=pwdResetQueryHtml(root.querySelector('#fp-user').value);
+        logAct('查询密码重置结果','登录页按用户名查询申请状态','账号');
+      };
+    }
+  });
 }
 
 /* ----- 管理员总览 ----- */
@@ -1418,6 +1732,7 @@ function renderAdminHome(){
       infoStat('待审批申请',pending)+infoStat('职称奖项',honors)+
       infoStat('作弊记录',cheatConfirmed)+infoStat('待接收反馈',cheatPending)+
       infoStat('待审核成绩',pendingReviewCount())+
+      infoStat('待处理密码重置',pendingPwdResetCount())+infoStat('系统日志',DB.logs.length)+
     '</div>'+
     '<div class="card"><h2>快捷操作 <span class="tag">管理员面板</span></h2>'+
       '<div style="display:flex;gap:10px;flex-wrap:wrap">'+
@@ -1434,12 +1749,17 @@ function renderAdminHome(){
         '<a class="btn ghost" href="#/message-send">发送消息</a>'+
         '<a class="btn ghost" href="#/honors">职称奖项</a>'+
         '<a class="btn ghost" href="#/requests">查看申请</a>'+
+        '<a class="btn primary" href="#/pwd-resets">处理密码重置申请</a>'+
         '<a class="btn ghost" href="#/data">导出备份</a>'+
+        '<a class="btn ghost" href="#/logs">系统日志</a>'+
+        '<a class="btn primary" href="#/maintenance">系统维护</a>'+
       '</div></div>'+
     '<div class="grid g2">'+
       '<div class="card"><h2>待办与提醒</h2>'+
         '<div class="notice-line"><span>📝 待审批成绩查看申请</span><span><b>'+pending+'</b> 条 · <a href="#/requests">去查看</a></span></div>'+
         '<div class="notice-line"><span>⏳ 待审核成绩提交</span><span><b>'+pendingReviewCount()+'</b> 项 · <a href="#/score-reviews">去审核</a></span></div>'+
+        '<div class="notice-line"><span>🔑 待处理密码重置申请</span><span><b>'+pendingPwdResetCount()+'</b> 条 · <a href="#/pwd-resets">去处理</a></span></div>'+
+        '<div class="notice-line"><span>🛠 系统维护模式</span><span><b>'+(maintenanceOn()?'已开启':'未开启')+'</b> · <a href="#/maintenance">去设置</a></span></div>'+
         '<div class="notice-line"><span>📢 强制展示公告</span><span><b>'+forced+'</b> 条 · <a href="#/announcements">去管理</a></span></div>'+
         '<div class="notice-line"><span>⚠ 待接收作弊反馈</span><span><b>'+cheatPending+'</b> 条 · <a href="#/cheating">去处理</a></span></div>'+
         '<div class="notice-line"><span>👤 未分班学生</span><span><b>'+unclassified+'</b> 人 · <a href="#/students">去处理</a></span></div>'+
@@ -1580,6 +1900,7 @@ function renderStaffHome(){
       infoStat('已发消息',sentMsgs)+infoStat(role==='head'?'本班选科组合':'涉及班级',role==='head'?combos:classCount)+
       infoStat('作弊记录',cheatConfirmed)+infoStat('待接收反馈',pendingCheatingCount())+
       infoStat('待审核成绩',pendingReviewCount())+
+      infoStat('待处理密码重置',pendingPwdResetCount())+
     '</div>'+
     '<div class="card"><h2>'+esc(session.title||ROLE_NAME[role])+'工作台 <span class="tag">'+esc(scopeTxt)+'</span></h2>'+
       '<div style="display:flex;gap:10px;flex-wrap:wrap">'+
@@ -1593,6 +1914,7 @@ function renderStaffHome(){
         '<a class="btn ghost" href="#/message-send">发送消息</a>'+
         '<a class="btn ghost" href="#/honors">职称奖项</a>'+
         '<a class="btn ghost" href="#/requests">'+(role==='head'?'申请审批':'查看申请')+'</a>'+
+        '<a class="btn primary" href="#/pwd-resets">处理密码重置申请</a>'+
         '<a class="btn ghost" href="#/stats">统计分析</a>'+
       '</div></div>'+
     '<div class="grid g2">'+
@@ -1608,6 +1930,7 @@ function renderStaffHome(){
       '<div class="card"><h2>待办与提醒</h2>'+
         '<div class="notice-line"><span>📝 待处理成绩查看申请</span><span><b>'+pending+'</b> 条 · <a href="#/requests">'+(role==='head'?'去审批':'去查看')+'</a></span></div>'+
         '<div class="notice-line"><span>⏳ 待审核成绩提交</span><span><b>'+pendingReviewCount()+'</b> 项 · <a href="#/score-reviews">'+(role==='head'?'查看进度':'去审核')+'</a></span></div>'+
+        '<div class="notice-line"><span>🔑 待处理密码重置申请</span><span><b>'+pendingPwdResetCount()+'</b> 条 · <a href="#/pwd-resets">去处理</a></span></div>'+
         '<div class="notice-line"><span>📢 强制展示公告</span><span><b>'+forced+'</b> 条 · <a href="#/announcements">去查看</a></span></div>'+
         '<div class="notice-line"><span>⚠ 待接收作弊反馈</span><span><b>'+pendingCheatingCount()+'</b> 条 · <a href="#/cheating">'+(role==='head'?'去查看':'去接收')+'</a></span></div>'+
         '<div class="notice-line"><span>🏆 '+(role==='head'?'本班':'权限内')+'职称奖项</span><span><b>'+honors+'</b> 条 · <a href="#/honors">去查看</a></span></div>'+
@@ -2397,6 +2720,9 @@ function renderAdminScores(){
         reviewedBy:null,reviewedName:'',reviewedAt:null,reviewNote:''},
         headSubmit?submitMeta():{}, r.data));
       save('scores');
+      logAct(headSubmit?'提交成绩待审核':'录入成绩',
+        (stuOf(r.data.studentId)||{}).name+' · '+r.data.exam+' · '+r.data.date+' · 总分 '+fmtNum(r.data.total),
+        headSubmit?'审核':'数据');
       toast(headSubmit?'成绩已提交，等待管理员 / 年级主任审核':'成绩已保存','ok');
       renderAdminScores();
     };
@@ -2513,6 +2839,7 @@ function openEditScore(id){
         }else{
           // 已生效成绩：保存为「待审修改」，原成绩继续对学生生效
           rec.pendingEdit=Object.assign({},r.data,submitMeta());
+          logAct('提交成绩修改审核',(s?s.name:'')+' · '+rec.exam+' · '+rec.date,'审核');
           toast('成绩修改已提交审核','ok');
         }
       }else{
@@ -2551,7 +2878,9 @@ async function delScore(id){
       '审核通过前学生端仍显示该成绩并提示审核中。','提交申请');
     if(!ok)return;
     rec.pendingDelete=submitMeta();
-    save('scores'); toast('删除申请已提交审核','ok'); renderAdminScores(); return;
+    save('scores');
+    logAct('提交成绩删除申请',(s?s.name:'')+' · '+rec.exam+' · '+rec.date,'审核');
+    toast('删除申请已提交审核','ok'); renderAdminScores(); return;
   }
   // 管理员：直接删除
   const ok=await confirmDialog('删除成绩',
@@ -2647,11 +2976,18 @@ async function doScoreReview(recId,type,action){
     Object.assign(rec,reviewMeta(note));
   }else if(type==='delete'){
     if(!rec.pendingDelete) return toast('该申请已不存在','err');
-    if(action==='approve'){ removeScoreRecord(rec); toast('已通过删除申请，成绩已移除','ok'); renderScoreReviews(); return; }
+    if(action==='approve'){
+      removeScoreRecord(rec);
+      logAct('审核通过成绩删除',(s.name||'学生')+' · '+rec.exam+' · '+rec.date+(note?' ｜ 意见：'+note:''),'审核');
+      toast('已通过删除申请，成绩已移除','ok'); renderScoreReviews(); return;
+    }
     rec.pendingDelete=null;
     Object.assign(rec,reviewMeta(note));
   }
   save('scores');
+  logAct(action==='approve'?'审核通过成绩':'驳回成绩申请',
+    REVIEW_TYPE_NAME[type]+' · '+(s.name||'学生')+' · '+rec.exam+' · '+rec.date+
+    (note?' ｜ 意见：'+note:''),'审核');
   toast(action==='approve'?'审核通过，成绩已对学生生效':'已驳回该申请','ok');
   renderScoreReviews();
 }
@@ -3497,10 +3833,11 @@ function renderAdminData(){
       '<div style="display:flex;gap:10px;flex-wrap:wrap">'+
         '<button class="btn primary" id="d-scores">导出全部成绩 JSON</button>'+
         '<button class="btn primary" id="d-students">导出学生账号 JSON</button>'+
-        '<button class="btn ghost" id="d-all">导出完整备份（含组织 / 人员 / 评语 / 公告 / 消息 / 申请 / 设置）</button>'+
+        '<button class="btn ghost" id="d-all">导出完整备份（含组织 / 人员 / 评语 / 公告 / 消息 / 申请 / 日志 / 设置）</button>'+
+        '<button class="btn ghost" id="d-logs">导出系统日志 JSON</button>'+
       '</div></div>'+
     '<div class="card"><h2 style="color:var(--danger)">危险操作</h2>'+
-      '<p class="hint">一键清空将删除 <b>全部学生账号、成绩、评语、公告、考试预告、作弊记录、消息、查看申请、年级班级与管理人员账号</b>，并退出登录；管理员账号与权限设置保留。此操作不可恢复，请先导出备份。</p>'+
+      '<p class="hint">一键清空将删除 <b>全部学生账号、成绩、评语、公告、考试预告、作弊记录、消息、查看申请、密码重置申请、年级班级与管理人员账号</b>，并退出登录；管理员账号、系统设置与系统日志（审计留痕）保留。此操作不可恢复，请先导出备份。</p>'+
       '<div style="margin-top:14px"><button class="btn danger" id="d-clear">一键清空本地数据</button></div>'+
     '</div>'+
     '<div class="card"><h2>当前存储概览</h2>'+
@@ -3511,14 +3848,17 @@ function renderAdminData(){
         '<div class="stat"><div class="k">成绩 / 评语 / 公告</div><div class="v">'+DB.scores.length+' / '+DB.comments.length+' / '+DB.announcements.length+'</div></div>'+
         '<div class="stat"><div class="k">消息 / 查看申请</div><div class="v">'+DB.messages.length+' / '+DB.gradeRequests.length+'</div></div>'+
         '<div class="stat"><div class="k">考试预告 / 作弊记录</div><div class="v">'+DB.examNotices.length+' / '+DB.cheating.length+'</div></div>'+
+        '<div class="stat"><div class="k">密码重置申请</div><div class="v">'+DB.pwdResets.length+'</div></div>'+
+        '<div class="stat"><div class="k">系统日志</div><div class="v">'+DB.logs.length+'</div></div>'+
       '</div></div>';
   mount(page('数据管理','首页 / 数据管理',content));
-  $('d-scores').onclick=()=>{ downloadJSON('成绩备份.json',{type:'scores',exportedAt:new Date().toLocaleString(),data:DB.scores}); toast('已导出成绩备份','ok'); };
-  $('d-students').onclick=()=>{ downloadJSON('学生账号备份.json',{type:'students',exportedAt:new Date().toLocaleString(),grades:DB.grades,classes:DB.classes,data:DB.students}); toast('已导出学生账号备份','ok'); };
-  $('d-all').onclick=()=>{ downloadJSON('完整备份.json',{type:'all',exportedAt:new Date().toLocaleString(),admin:DB.admin,staff:DB.staff,grades:DB.grades,classes:DB.classes,students:DB.students,scores:DB.scores,comments:DB.comments,announcements:DB.announcements,messages:DB.messages,gradeRequests:DB.gradeRequests,examNotices:DB.examNotices,cheating:DB.cheating,settings:DB.settings}); toast('已导出完整备份','ok'); };
+  $('d-scores').onclick=()=>{ downloadJSON('成绩备份.json',{type:'scores',exportedAt:new Date().toLocaleString(),data:DB.scores}); logAct('导出成绩备份','导出 '+DB.scores.length+' 条成绩','导出'); toast('已导出成绩备份','ok'); };
+  $('d-students').onclick=()=>{ downloadJSON('学生账号备份.json',{type:'students',exportedAt:new Date().toLocaleString(),grades:DB.grades,classes:DB.classes,data:DB.students}); logAct('导出学生账号备份','导出 '+DB.students.length+' 个学生账号','导出'); toast('已导出学生账号备份','ok'); };
+  $('d-all').onclick=()=>{ downloadJSON('完整备份.json',{type:'all',exportedAt:new Date().toLocaleString(),admin:DB.admin,staff:DB.staff,grades:DB.grades,classes:DB.classes,students:DB.students,scores:DB.scores,comments:DB.comments,announcements:DB.announcements,messages:DB.messages,gradeRequests:DB.gradeRequests,examNotices:DB.examNotices,cheating:DB.cheating,pwdResets:DB.pwdResets,logs:DB.logs,settings:DB.settings}); logAct('导出完整备份','导出全部业务数据与系统日志','导出'); toast('已导出完整备份','ok'); };
+  $('d-logs').onclick=()=>{ downloadJSON('系统日志.json',{type:'logs',exportedAt:new Date().toLocaleString(),data:DB.logs}); logAct('导出系统日志','共 '+DB.logs.length+' 条','导出'); toast('已导出系统日志','ok'); };
   $('d-clear').onclick=async()=>{
     const ok1=await confirmDialog('第 1 次确认 · 清空数据',
-      '将删除 <b>'+DB.students.length+'</b> 个学生账号、<b>'+DB.scores.length+'</b> 条成绩、<b>'+DB.comments.length+'</b> 条评语、<b>'+DB.announcements.length+'</b> 条公告、<b>'+DB.examNotices.length+'</b> 条考试预告、<b>'+DB.cheating.length+'</b> 条作弊记录、<b>'+DB.messages.length+'</b> 条消息、<b>'+DB.gradeRequests.length+'</b> 条申请及全部年级班级与管理人员账号，并退出登录。<br>该操作<b>不可恢复</b>，是否已导出备份？','我已备份，继续');
+      '将删除 <b>'+DB.students.length+'</b> 个学生账号、<b>'+DB.scores.length+'</b> 条成绩、<b>'+DB.comments.length+'</b> 条评语、<b>'+DB.announcements.length+'</b> 条公告、<b>'+DB.examNotices.length+'</b> 条考试预告、<b>'+DB.cheating.length+'</b> 条作弊记录、<b>'+DB.messages.length+'</b> 条消息、<b>'+DB.gradeRequests.length+'</b> 条查看申请、<b>'+DB.pwdResets.length+'</b> 条密码重置申请及全部年级班级与管理人员账号，并退出登录。系统日志保留用于审计。<br>该操作<b>不可恢复</b>，是否已导出备份？','我已备份，继续');
     if(!ok1)return;
     const ok2=await openModal({
       title:'第 2 次确认 · 输入文字',
@@ -3528,8 +3868,9 @@ function renderAdminData(){
       onOk(root){ if(root.querySelector('#clr').value.trim()!=='清空'){ root.querySelector('#clr-err').textContent='输入不正确，已取消清空'; return false; } return true; }
     });
     if(!ok2)return;
+    logAct('清空本地数据','管理员执行一键清空，日志保留用于审计','维护');
     ['staff','students','grades','classes','scores','comments','announcements','messages',
-     'gradeRequests','examNotices','cheating']
+     'gradeRequests','examNotices','cheating','pwdResets']
       .forEach(k=>{ DB[k]=[];save(k); });
     DB.annRead={}; save('annRead');
     LS.del('session'); session=null; scoreFilter={classId:'',exam:''};
@@ -3537,7 +3878,390 @@ function renderAdminData(){
   };
 }
 
+/* ================= ⑤-C 密码重置申请 / 系统日志 / 系统维护 页面 ================= */
+const LOG_CAT_NAME={'数据':'数据变更','登录':'登录退出','访问':'页面访问','审核':'成绩审核',
+  '账号':'账号安全','维护':'系统维护','导出':'导入导出','安全':'安全事件'};
+const LOG_CAT_CLASS={'登录':'login','审核':'audit','账号':'account','维护':'maintain',
+  '导出':'export','安全':'security'};
+
+/* ----- 管理端：处理学生密码重置申请（管理员 / 年级主任 / 班主任） ----- */
+function pwdResetStatusBadge(q){
+  return q.status==='pending'?'<span class="badge pending">⏳ 待处理</span>':
+    q.status==='approved'?'<span class="badge approved">已重置</span>':
+    '<span class="badge rejected">已驳回</span>';
+}
+function renderPwdResets(){
+  const list=visiblePwdResets();
+  const pend=list.filter(q=>q.status==='pending');
+  const done=list.filter(q=>q.status!=='pending');
+  const scope=session.role==='admin'?'全部学生':
+    (session.role==='head'?'本班学生':'本年级 / 管辖范围学生');
+  const pendHtml=pend.map(q=>{
+    const s=stuOf(q.studentId)||{};
+    return '<div class="review-item"><div class="rv-head">'+pwdResetStatusBadge(q)+
+      '<b>'+esc(q.name||s.name||'已删除学生')+'</b>'+
+      '<span class="hint">'+esc(q.username)+' · '+esc(classNameOf(s))+'</span></div>'+
+      '<div class="rv-meta">申请时间：'+esc(new Date(q.createdAt).toLocaleString())+
+        ' ｜ 申请说明：'+esc(q.reason||'无')+'</div>'+
+      '<div class="ops" style="margin-top:10px">'+
+        '<button class="btn primary sm" data-prok="'+esc(q.id)+'">通过并重置密码</button>'+
+        '<button class="btn ghost sm" style="color:var(--danger)" data-prno="'+esc(q.id)+'">驳回申请</button>'+
+      '</div></div>';
+  }).join('')||'<div class="empty">暂无待处理的密码重置申请 ✅</div>';
+  const doneRows=done.map(q=>{
+    const s=stuOf(q.studentId)||{};
+    return '<tr><td>'+esc(q.name||s.name||'—')+'</td><td>'+esc(q.username)+'</td>'+
+      '<td>'+esc(classNameOf(s))+'</td><td>'+pwdResetStatusBadge(q)+'</td>'+
+      '<td>'+(q.newPassword?'<span class="np">'+esc(q.newPassword)+'</span>':'—')+'</td>'+
+      '<td>'+esc((q.handledTitle||'')+' '+(q.handledName||'—'))+'</td>'+
+      '<td>'+esc(q.handledAt?new Date(q.handledAt).toLocaleString():'—')+'</td>'+
+      '<td style="white-space:normal">'+esc(q.note||'—')+'</td></tr>';
+  }).join('')||'<tr><td colspan="8" class="empty">暂无已处理记录</td></tr>';
+  const content=
+    '<div class="stat-grid">'+
+      infoStat('可见申请',list.length)+infoStat('待处理',pend.length)+
+      infoStat('已重置',list.filter(q=>q.status==='approved').length)+
+      infoStat('已驳回',list.filter(q=>q.status==='rejected').length)+
+    '</div>'+
+    '<div class="card"><h2>待处理申请 <span class="tag">'+esc(scope)+'</span></h2>'+
+      '<p class="hint" style="margin-bottom:10px">通过后需要设置新密码，学生可在登录页「忘记密码 → 查询处理结果」查看，'+
+      '登录后也会收到醒目提示；驳回时需填写说明。所有操作均写入系统日志。</p>'+
+      pendHtml+'</div>'+
+    '<div class="card"><h2>已处理记录 <span class="tag">共 '+done.length+' 条</span></h2>'+
+      '<div class="table-scroll"><table><thead><tr><th>学生</th><th>用户名</th><th>班级</th>'+
+      '<th>状态</th><th>重置后密码</th><th>处理人</th><th>处理时间</th><th>备注</th></tr></thead>'+
+      '<tbody>'+doneRows+'</tbody></table></div></div>';
+  mount(page('密码重置申请','首页 / 密码重置申请',content));
+
+  document.querySelectorAll('[data-prok]').forEach(b=>b.onclick=()=>{
+    const q=DB.pwdResets.find(x=>x.id===b.dataset.prok);
+    if(!q||!canHandlePwdReset(q)) return toast('权限不足：该申请不在你的管辖范围','err');
+    const s=stuOf(q.studentId)||{};
+    openModal({
+      title:'重置密码 · '+(q.name||s.name||''),width:540,okText:'确认重置并生效',
+      body:'<p class="hint">学生：'+esc(q.name||s.name||'')+'（'+esc(q.username)+' · '+esc(classNameOf(s))+'）<br>'+
+        '申请说明：'+esc(q.reason||'无')+'</p>'+
+        '<div class="field" style="margin-top:12px"><label>新密码（至少 4 位）</label>'+
+          '<input id="pr-new" value="'+esc(genPassword())+'"></div>'+
+        '<button type="button" class="btn ghost sm" id="pr-gen" style="margin-top:8px">重新生成随机密码</button>'+
+        '<div class="field" style="margin-top:12px"><label>处理备注（可选）</label>'+
+          '<input id="pr-note" placeholder="如：已核对学生身份"></div>'+
+        '<div class="err" id="pr-err"></div>'+
+        '<p class="hint" style="margin-top:8px">重置后立即生效；学生可在登录页查询新密码，登录后也会看到醒目提示。</p>',
+      onOpen(root){ root.querySelector('#pr-gen').onclick=()=>{ root.querySelector('#pr-new').value=genPassword(); }; },
+      onOk(root){
+        const np=root.querySelector('#pr-new').value.trim();
+        if(np.length<4){ root.querySelector('#pr-err').textContent='新密码至少 4 位'; return false; }
+        const stu=stuOf(q.studentId);
+        if(!stu){ toast('该学生账号已被删除','err'); return true; }
+        const note=root.querySelector('#pr-note').value.trim();
+        stu.password=np; save('students');
+        q.status='approved';q.newPassword=np;q.note=note;q.seenAt=null;
+        q.handledBy=session.id;q.handledName=session.name||session.username;
+        q.handledTitle=session.title||ROLE_NAME[session.role]||'管理人员';q.handledAt=Date.now();
+        save('pwdResets');
+        logAct('审批密码重置申请','为 '+(stu.name||q.username)+'（'+q.username+'）重置登录密码，处理人 '+q.handledTitle+' '+q.handledName,'账号');
+        toast('密码已重置并通知学生','ok'); renderPwdResets(); return true;
+      }
+    });
+  });
+  document.querySelectorAll('[data-prno]').forEach(b=>b.onclick=()=>{
+    const q=DB.pwdResets.find(x=>x.id===b.dataset.prno);
+    if(!q||!canHandlePwdReset(q)) return toast('权限不足','err');
+    openModal({
+      title:'驳回密码重置申请',width:480,okText:'确认驳回',
+      body:'<p class="hint">学生：'+esc(q.name||q.username)+'</p>'+
+        '<div class="field" style="margin-top:12px"><label>驳回说明（建议填写）</label>'+
+        '<input id="pr-reason" placeholder="如：请到教务处现场核验身份"></div>'+
+        '<div class="err" id="pr-err"></div>',
+      onOk(root){
+        const note=root.querySelector('#pr-reason').value.trim();
+        if(!note){ root.querySelector('#pr-err').textContent='请填写驳回说明'; return false; }
+        q.status='rejected';q.note=note;q.handledBy=session.id;
+        q.handledName=session.name||session.username;
+        q.handledTitle=session.title||ROLE_NAME[session.role]||'管理人员';q.handledAt=Date.now();
+        save('pwdResets');
+        logAct('驳回密码重置申请',(q.name||q.username)+'：'+note,'账号');
+        toast('已驳回申请','ok'); renderPwdResets(); return true;
+      }
+    });
+  });
+}
+
+/* ----- 学生端：密码重置申请 / 查看结果 / 自行修改密码 ----- */
+function renderStudentPwdReset(){
+  const me=stuOf(session.id)||{};
+  const list=pwdResetsFor(session.id);
+  const unread=unreadPwdReset(session.id);
+  const pending=list.some(q=>q.status==='pending');
+  const banner=unread?
+    '<div class="reset-banner"><h2>🔑 你的登录密码已被重置</h2>'+
+      '<div>由 '+esc((unread.handledTitle||'管理人员')+' '+(unread.handledName||''))+
+        ' 重置，新密码：<span class="np">'+esc(unread.newPassword)+'</span></div>'+
+      '<p class="hint" style="margin-top:7px">请尽快在下方「修改我的密码」改为自己的密码。'+
+        '点击「我知道了」可关闭首页提示。</p>'+
+      '<div style="display:flex;gap:9px;flex-wrap:wrap;margin-top:10px">'+
+        '<button class="btn primary sm" id="spr-seen">我知道了</button>'+
+      '</div></div>':'';
+  const rows=list.map(q=>'<tr><td>'+esc(new Date(q.createdAt).toLocaleString())+'</td>'+
+    '<td>'+pwdResetStatusBadge(q)+'</td><td>'+esc(q.reason||'—')+'</td>'+
+    '<td>'+(q.status==='approved'?'<span class="np">'+esc(q.newPassword)+'</span>':'—')+'</td>'+
+    '<td>'+esc((q.handledTitle||'')+' '+(q.handledName||'—'))+'</td>'+
+    '<td style="white-space:normal">'+esc(q.note||'—')+'</td></tr>')
+    .join('')||'<tr><td colspan="6" class="empty">暂无密码重置申请</td></tr>';
+  const content=banner+
+    '<div class="card"><h2>申请重置密码</h2>'+
+      '<p class="hint">忘记密码时可提交申请，由班主任 / 年级主任 / 管理员处理；'+
+        '也可在登录页点「忘记密码 / 申请重置」提交并查询处理结果。</p>'+
+      '<div class="field" style="margin-top:12px"><label>申请说明（可选）</label>'+
+        '<input id="spr-reason" placeholder="如：忘记登录密码，申请重置"></div>'+
+      '<div class="err" id="spr-err"></div>'+
+      '<button class="btn primary" id="spr-submit" style="margin-top:12px"'+(pending?' disabled':'')+'>'+
+        (pending?'已有待处理申请':'提交重置申请')+'</button>'+
+    '</div>'+
+    '<div class="card"><h2>我的申请记录 <span class="tag">共 '+list.length+' 条</span></h2>'+
+      '<div class="table-scroll"><table><thead><tr><th>申请时间</th><th>状态</th><th>申请说明</th>'+
+      '<th>重置后密码</th><th>处理人</th><th>处理备注</th></tr></thead><tbody>'+rows+'</tbody></table></div></div>'+
+    '<div class="card"><h2>修改我的密码</h2>'+
+      '<div class="grid g3">'+
+        '<div class="field"><label>当前密码</label><input type="password" id="sp-old"></div>'+
+        '<div class="field"><label>新密码（至少 4 位）</label><input type="password" id="sp-new"></div>'+
+        '<div class="field"><label>确认新密码</label><input type="password" id="sp-new2"></div>'+
+      '</div><div class="err" id="sp-err"></div>'+
+      '<button class="btn primary" id="sp-save" style="margin-top:12px">保存新密码</button>'+
+    '</div>';
+  mount(page('密码重置','首页 / 密码重置',content));
+  if($('spr-seen')) $('spr-seen').onclick=()=>{ markPwdResetSeen(unread.id); toast('已确认','ok'); renderStudentPwdReset(); };
+  $('spr-submit').onclick=()=>{
+    const r=submitPwdReset(me.username,$('spr-reason').value);
+    if(!r.ok) return $('spr-err').textContent=r.msg;
+    $('spr-err').textContent=''; toast('密码重置申请已提交','ok'); renderStudentPwdReset();
+  };
+  $('sp-save').onclick=()=>{
+    const old=$('sp-old').value,np=$('sp-new').value,np2=$('sp-new2').value;
+    if(old!==me.password) return $('sp-err').textContent='当前密码不正确';
+    if(np.length<4) return $('sp-err').textContent='新密码至少 4 位';
+    if(np!==np2) return $('sp-err').textContent='两次输入的新密码不一致';
+    me.password=np; save('students');
+    DB.pwdResets.filter(q=>q.studentId===session.id&&q.status==='approved'&&!q.seenAt)
+      .forEach(q=>{ q.seenAt=Date.now(); });
+    save('pwdResets');
+    logAct('学生修改密码',(me.name||me.username)+' 自行修改登录密码','账号');
+    $('sp-err').textContent=''; toast('密码已修改，请牢记新密码','ok'); renderStudentPwdReset();
+  };
+}
+
+/* ----- 管理员：系统日志 ----- */
+function renderLogs(){
+  const cats=['全部',...Object.keys(LOG_CAT_NAME)];
+  const catOpts=cats.map(c=>'<option value="'+esc(c)+'">'+esc(c==='全部'?'全部类别':LOG_CAT_NAME[c])+'</option>').join('');
+  const roleOpts=['全部','admin','leader','head','student','visitor'].map(r=>
+    '<option value="'+r+'">'+esc(r==='全部'?'全部角色':(r==='visitor'?'未登录 / 访客':ROLE_NAME[r]||r))+'</option>').join('');
+  const content=
+    '<div class="stat-grid">'+
+      infoStat('日志总数',DB.logs.length)+infoStat('今日记录',DB.logs.filter(l=>new Date(l.at).toDateString()===new Date().toDateString()).length)+
+      infoStat('安全事件',DB.logs.filter(l=>l.cat==='安全').length)+
+      infoStat('维护操作',DB.logs.filter(l=>l.cat==='维护').length)+
+    '</div>'+
+    '<div class="card"><h2>筛选与导出</h2>'+
+      '<div class="grid g4">'+
+        '<div class="field"><label>类别</label><select id="lg-cat">'+catOpts+'</select></div>'+
+        '<div class="field"><label>操作角色</label><select id="lg-role">'+roleOpts+'</select></div>'+
+        '<div class="field"><label>时间范围</label><select id="lg-range">'+
+          '<option value="all">全部</option><option value="today">今天</option><option value="7">近 7 天</option></select></div>'+
+        '<div class="field"><label>关键词（操作 / 详情 / 用户）</label><input id="lg-kw" placeholder="输入关键词"></div>'+
+      '</div>'+
+      '<div style="display:flex;gap:9px;flex-wrap:wrap;margin-top:12px">'+
+        '<button class="btn primary" id="lg-export">导出系统日志 JSON</button>'+
+        '<button class="btn ghost" id="lg-refresh">刷新列表</button>'+
+        '<button class="btn danger" id="lg-clear">清空系统日志</button>'+
+      '</div></div>'+
+    '<div class="card"><h2>操作记录 <span class="tag" id="lg-count"></span></h2>'+
+      '<div id="lg-list"></div></div>';
+  mount(page('系统日志','首页 / 系统日志',content));
+  const refresh=()=>{
+    const cat=val('lg-cat'),role=val('lg-role'),range=val('lg-range'),kw=val('lg-kw').toLowerCase();
+    const now=Date.now(),day0=new Date().setHours(0,0,0,0);
+    let list=DB.logs.filter(l=>{
+      if(cat&&cat!=='全部'&&l.cat!==cat) return false;
+      if(role&&role!=='全部'&&l.role!==role) return false;
+      if(range==='today'&&l.at<day0) return false;
+      if(range==='7'&&l.at<now-7*86400000) return false;
+      if(kw&&!(String(l.action)+' '+String(l.detail)+' '+String(l.userName)+' '+String(l.title)).toLowerCase().includes(kw)) return false;
+      return true;
+    }).slice().reverse();
+    $('lg-count').textContent='共 '+list.length+' 条'+(list.length>200?'（仅显示最近 200 条）':'');
+    const shown=list.slice(0,200);
+    $('lg-list').innerHTML=shown.map(l=>{
+      const cls=LOG_CAT_CLASS[l.cat]||'';
+      return '<div class="log-item"><div class="lg-head">'+
+        '<span class="badge cat '+cls+'">'+esc(LOG_CAT_NAME[l.cat]||l.cat||'数据')+'</span>'+
+        '<span class="lg-act">'+esc(l.action)+'</span>'+
+        '<span class="badge soft">'+esc(l.title||'—')+'</span>'+
+        '<span class="hint">'+esc(new Date(l.at).toLocaleString())+'</span></div>'+
+        '<div class="lg-detail">'+esc(l.detail||'—')+'</div>'+
+        '<div class="lg-meta">操作人：'+esc(l.userName||'—')+' ｜ 角色：'+esc(ROLE_NAME[l.role]||(l.role==='visitor'?'未登录 / 访客':l.role))+'</div>'+
+      '</div>';
+    }).join('')||'<div class="empty">没有符合条件的日志</div>';
+  };
+  ['lg-cat','lg-role','lg-range'].forEach(id=>$(id).onchange=refresh);
+  $('lg-kw').oninput=refresh;
+  $('lg-refresh').onclick=refresh;
+  $('lg-export').onclick=()=>{
+    downloadJSON('系统日志.json',{type:'logs',exportedAt:new Date().toLocaleString(),data:DB.logs});
+    logAct('导出系统日志','共导出 '+DB.logs.length+' 条操作记录','导出');
+    toast('系统日志已导出','ok');
+  };
+  $('lg-clear').onclick=async()=>{
+    const ok=await confirmDialog('清空系统日志',
+      '将删除全部 <b>'+DB.logs.length+'</b> 条操作日志（清空动作本身会保留一条审计记录），不可恢复。','确认清空');
+    if(!ok)return;
+    DB.logs=[]; flushLogs();
+    logAct('清空系统日志','管理员清空全部操作日志','维护');
+    toast('系统日志已清空','ok'); renderLogs();
+  };
+  refresh();
+}
+
+/* ----- 管理员：系统维护（仅管理员） ----- */
+function renderMaintenance(){
+  const usage=storageUsage();
+  const total=usage.reduce((a,b)=>a+b.bytes,0);
+  const issues=systemCheck();
+  const m=DB.settings.maintenance||{enabled:false,message:'系统正在维护，请稍后再试。'};
+  const usageRows=usage.map(u=>'<tr><td>'+esc(u.key)+'</td><td>'+fmtBytes(u.bytes)+'</td></tr>').join('')
+    ||'<tr><td colspan="2" class="empty">暂无数据</td></tr>';
+  const checkRows=issues.length?issues.map(i=>
+    '<div class="check-row warn"><span>⚠ '+esc(i.label)+'</span><span><b>'+i.count+'</b> 处 · 可修复</span></div>').join('')
+    :'<div class="check-row ok"><span>✅ 未发现异常数据，系统状态良好</span><span>0 处</span></div>';
+  const content=
+    '<div class="card"><h2>维护模式 <span class="tag">'+(maintenanceOn()?'已开启':'未开启')+'</span></h2>'+
+      '<p class="hint">开启后<b>学生账号无法登录 / 继续访问</b>，管理员与管理人员仍可进入系统；'+
+        '适用于数据整理、批量导入等场景。所有页面会显示维护提示条。</p>'+
+      '<label class="chk" style="margin-top:12px"><input type="checkbox" id="mt-on"'+(m.enabled?' checked':'')+'> 开启维护模式</label>'+
+      '<div class="field" style="margin-top:12px"><label>维护提示语</label>'+
+        '<input id="mt-msg" value="'+esc(m.message||'')+'" placeholder="系统正在维护，请稍后再试。"></div>'+
+      '<button class="btn primary" id="mt-save" style="margin-top:12px">保存维护设置</button>'+
+    '</div>'+
+    '<div class="grid g2">'+
+      '<div class="card"><h2>存储概览 <span class="tag">LocalStorage</span></h2>'+
+        '<div class="stat-grid" style="grid-template-columns:repeat(2,minmax(0,1fr));gap:10px">'+
+          infoStat('已用空间',fmtBytes(total))+infoStat('数据键',usage.length)+
+          infoStat('业务记录',DB.students.length+DB.scores.length+DB.staff.length)+
+          infoStat('系统日志',DB.logs.length+' 条')+
+        '</div>'+
+        '<div class="table-scroll" style="margin-top:12px"><table><thead><tr><th>数据键</th><th>占用</th></tr></thead>'+
+        '<tbody>'+usageRows+'</tbody></table></div></div>'+
+      '<div class="card"><h2>数据体检 <span class="tag">'+(issues.length?'发现 '+issues.length+' 类问题':'全部正常')+'</span></h2>'+
+        checkRows+
+        '<div style="display:flex;gap:9px;flex-wrap:wrap;margin-top:14px">'+
+          '<button class="btn primary" id="mt-repair"'+(issues.length?'':' disabled')+'>一键修复异常数据</button>'+
+          '<button class="btn ghost" id="mt-recheck">重新体检</button>'+
+        '</div>'+
+        '<p class="hint" style="margin-top:10px">修复内容：清理指向已删除学生的孤立记录、补齐成绩审核状态与选科字段、'+
+          '补登记班级年级、裁剪超限日志。</p>'+
+      '</div>'+
+    '</div>'+
+    '<div class="grid g2">'+
+      '<div class="card"><h2>备份恢复</h2>'+
+        '<p class="hint">从本地「完整备份.json」恢复全部数据。恢复会<b>覆盖当前数据</b>并退出登录；'+
+          '文件由浏览器本地读取，不会上传到任何服务器。</p>'+
+        '<div class="field" style="margin-top:12px"><label>选择备份文件（.json）</label>'+
+          '<input type="file" id="mt-file" accept=".json,application/json"></div>'+
+        '<div id="mt-file-msg" class="hint" style="margin-top:8px"></div>'+
+      '</div>'+
+      '<div class="card"><h2>日志与诊断</h2>'+
+        '<div style="display:flex;gap:9px;flex-wrap:wrap">'+
+          '<a class="btn primary" href="#/logs">查看系统日志</a>'+
+          '<button class="btn ghost" id="mt-diag">导出诊断包 JSON</button>'+
+          '<button class="btn ghost" id="mt-trim">裁剪日志至最近 500 条</button>'+
+        '</div>'+
+        '<p class="hint" style="margin-top:10px">系统自动记录所有数据写入、登录退出、页面访问、成绩审核、'+
+          '账号变更与维护操作，最多保留 '+LOG_LIMIT+' 条，超出自动裁剪最旧记录。</p>'+
+      '</div>'+
+    '</div>';
+  mount(page('系统维护','首页 / 系统维护',content));
+  $('mt-save').onclick=()=>{
+    const on=$('mt-on').checked,msg=val('mt-msg')||'系统正在维护，请稍后再试。';
+    const was=maintenanceOn();
+    DB.settings.maintenance={enabled:on,message:msg,
+      since:on?(DB.settings.maintenance.since||Date.now()):null};
+    save('settings');
+    logAct(on?'开启维护模式':'关闭维护模式','提示语：'+msg,'维护');
+    toast(on?'维护模式已开启，学生访问已被拦截':'维护模式已关闭','ok');
+    renderMaintenance();
+  };
+  $('mt-recheck').onclick=()=>{ toast('体检完成','ok'); renderMaintenance(); };
+  $('mt-repair').onclick=async()=>{
+    const ok=await confirmDialog('一键修复异常数据',
+      '将按体检结果清理孤立记录并补齐缺失字段，操作会写入系统日志。是否继续？','确认修复');
+    if(!ok)return;
+    const n=systemRepair(); toast('修复完成，共处理 '+n+' 处','ok'); renderMaintenance();
+  };
+  $('mt-diag').onclick=()=>{
+    downloadJSON('系统诊断包.json',{
+      type:'diagnostics',generatedAt:new Date().toLocaleString(),
+      admin:DB.admin?DB.admin.username:null,
+      counts:{students:DB.students.length,staff:DB.staff.length,grades:DB.grades.length,
+        classes:DB.classes.length,scores:DB.scores.length,comments:DB.comments.length,
+        announcements:DB.announcements.length,messages:DB.messages.length,
+        gradeRequests:DB.gradeRequests.length,examNotices:DB.examNotices.length,
+        cheating:DB.cheating.length,pwdResets:DB.pwdResets.length,logs:DB.logs.length},
+      storage:usage,settings:DB.settings,issues:systemCheck()
+    });
+    logAct('导出诊断包','导出系统状态与数据体检结果','导出');
+    toast('诊断包已导出','ok');
+  };
+  $('mt-trim').onclick=async()=>{
+    if(DB.logs.length<=500) return toast('日志不足 500 条，无需裁剪','ok');
+    const ok=await confirmDialog('裁剪系统日志','将只保留最近 500 条日志，其余删除。','确认裁剪');
+    if(!ok)return;
+    DB.logs=DB.logs.slice(-500); flushLogs();
+    logAct('裁剪系统日志','保留最近 500 条操作记录','维护');
+    toast('日志已裁剪','ok'); renderMaintenance();
+  };
+  $('mt-file').onchange=e=>{
+    const f=e.target.files[0]; if(!f)return;
+    const reader=new FileReader();
+    reader.onload=async ev=>{
+      let data;
+      try{ data=JSON.parse(ev.target.result); }catch(_){ return toast('文件不是有效的 JSON','err'); }
+      if(data.type!=='all') return $('mt-file-msg').textContent='请选择由「数据管理 → 导出完整备份」生成的 JSON 文件';
+      $('mt-file-msg').innerHTML='已读取备份：学生 '+(data.students||[]).length+' 人、成绩 '+
+        (data.scores||[]).length+' 条，备份时间 '+esc(data.exportedAt||'未知');
+      const ok=await confirmDialog('恢复备份 · 二次确认',
+        '将用备份文件<b>覆盖当前全部数据</b>（含账号、成绩、公告、日志等），并退出登录。<br>'+
+        '当前数据不可恢复，建议先导出一份完整备份。','确认恢复');
+      if(!ok)return;
+      logSuppress++;
+      ['staff','students','grades','classes','scores','comments','announcements','annRead',
+       'messages','gradeRequests','examNotices','cheating','pwdResets','settings','logs']
+        .forEach(k=>{ if(data[k]!==undefined){ DB[k]=data[k]; LS.set(k,DB[k]); } });
+      if(data.admin){ DB.admin=data.admin; LS.set('admin',DB.admin); }
+      logSuppress--;
+      migrate();
+      logAct('恢复备份','从本地 JSON 文件恢复全部数据','维护');
+      LS.del('session'); session=null;
+      toast('恢复完成，请重新登录','ok'); setHash('#/login');
+    };
+    reader.readAsText(f);
+  };
+}
+
 /* ----- 学生端：本人成绩（含排名与榜首姓名、关联评语） ----- */
+/** 学生首页：密码已被重置且尚未查看时的醒目提示 */
+function pwdResetBannerHtml(stuId){
+  const q=unreadPwdReset(stuId); if(!q) return '';
+  return '<div class="reset-banner"><h2>🔑 你的登录密码已被重置</h2>'+
+    '<div>由 '+esc((q.handledTitle||'管理人员')+' '+(q.handledName||''))+' 处理，'+
+      '新密码：<span class="np">'+esc(q.newPassword)+'</span></div>'+
+    '<p class="hint" style="margin-top:7px">请尽快修改为自己易记的密码。'+
+      esc(q.handledAt?new Date(q.handledAt).toLocaleString():'')+'</p>'+
+    '<div style="display:flex;gap:9px;flex-wrap:wrap;margin-top:10px">'+
+      '<a class="btn primary sm" href="#/student/pwd-reset">去修改密码 / 查看记录</a>'+
+      '<button class="btn ghost sm" id="pr-seen">我知道了</button>'+
+    '</div></div>';
+}
 /** 班主任已提交、但尚未审核通过的新增成绩：只显示「审核中」，不泄露任何分数 */
 function pendingScoreCardHtml(r){
   return '<div class="review-card" style="border-color:#fcd34d">'+
@@ -3617,6 +4341,7 @@ function renderStudentHome(){
     '<div class="txt">'+esc(c.content)+'</div></div>').join('');
   const content=clockCardHtml()+
     cheatAlertHtml(session.id)+
+    pwdResetBannerHtml(session.id)+
     '<div class="card" style="background:var(--navy-light);border-color:#c7d7f7">'+
       '<h2 style="margin-bottom:6px">'+esc(session.name||session.username)+' 同学，你好 👋</h2>'+
       '<p class="hint">班级：<b>'+esc(classNameOf(me))+'</b> ｜ 年级：<b>'+esc(gradeOf(me))+'</b> ｜ 选科组合：<b>'+esc(comboName(me))+'</b> ｜ 已生效 '+effectiveCount+' 次考试'+
@@ -3630,11 +4355,16 @@ function renderStudentHome(){
         '<a class="btn ghost sm" href="#/student/comments">我的评语</a>'+
         '<a class="btn ghost sm" href="#/exam-notices">考试预告</a>'+
         '<a class="btn ghost sm" href="#/student/cheating">我的违纪记录</a>'+
+        '<a class="btn ghost sm" href="#/student/pwd-reset">密码重置</a>'+
       '</div></div>'+
     examNoticeHtml(3)+
     announcementHtml()+
     (general.length?'<div class="card"><h2>通用评语</h2>'+generalHtml+'</div>':'')+cards;
   mount(page('我的成绩','首页 / 我的成绩',content));
+  if($('pr-seen')) $('pr-seen').onclick=()=>{
+    const q=unreadPwdReset(session.id); if(q) markPwdResetSeen(q.id);
+    toast('已确认，可在「密码重置」页随时查看','ok'); renderStudentHome();
+  };
 }
 /* ----- 学生端：总分趋势折线图 ----- */
 function renderStudentTrend(){
@@ -3842,9 +4572,12 @@ function drawFallbackChart(canvas,labels,values){
 /* ---------- ⑧ 启动与数据迁移 ---------- */
 /** 兼容旧版数据：为老学生补 classId / combo，按 className 自动建班级与年级 */
 function migrate(){
-  // 旧版本没有「考试预告 / 作弊记录」键：初始化为空数组，避免读取时报错
+  logSuppress++;   // 迁移只是补齐结构，不产生「数据变更」日志噪音
+  // 旧版本没有「考试预告 / 作弊记录 / 密码重置申请 / 系统日志」键：初始化为空数组
   if(!Array.isArray(DB.examNotices)) DB.examNotices=[];
   if(!Array.isArray(DB.cheating)) DB.cheating=[];
+  if(!Array.isArray(DB.pwdResets)) DB.pwdResets=[];
+  if(!Array.isArray(DB.logs)) DB.logs=[];
   // 旧版作弊记录没有「分科」字段：补为空数组，按「整场考试」展示，不丢失原有标注
   DB.cheating.forEach(c=>{ if(!Array.isArray(c.subjects)) c.subjects=[]; });
   // 旧版成绩没有审核字段：一律视为「已生效」，避免历史成绩被误判为待审核
@@ -3879,13 +4612,18 @@ function migrate(){
   // 旧成绩中选考科目若超过 100 分，仅做展示兼容、不改写数据
   // 统一落盘一次：既保存迁移结果，也为新增的 staff/grades/classes/comments/公告 建立键
   ['students','staff','grades','classes','scores','comments','announcements',
-   'messages','gradeRequests','examNotices','cheating'].forEach(k=>save(k));
+   'messages','gradeRequests','examNotices','cheating','pwdResets'].forEach(k=>save(k));
   if(!DB.annRead||typeof DB.annRead!=='object') DB.annRead={};
   save('annRead');
   if(!DB.settings||typeof DB.settings!=='object') DB.settings={};
   if(typeof DB.settings.headOtherComboFirst!=='boolean') DB.settings.headOtherComboFirst=false;
+  if(!DB.settings.maintenance||typeof DB.settings.maintenance!=='object')
+    DB.settings.maintenance={enabled:false,message:'系统正在维护，请稍后再试。',since:null};
   save('settings');
+  if(DB.logs.length>LOG_LIMIT) DB.logs=DB.logs.slice(-LOG_LIMIT);
+  LS.set('logs',DB.logs);
   if(DB.admin) save('admin');
+  logSuppress--;
 }
 migrate();
 route();
