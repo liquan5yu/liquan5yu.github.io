@@ -212,6 +212,24 @@ td .ops{display:flex;gap:6px;flex-wrap:wrap}
   padding:1px 7px;font-size:11px;font-weight:700;line-height:1.7}
 .cheat-sub-tag.all{background:#92400e}
 .badge.cheat{white-space:normal;line-height:1.5}
+/* ============ 成绩提交审核 ============ */
+.badge.pending{background:#fef3c7;color:#92400e;border:1px solid #fde68a}
+.badge.rejected{background:#fee2e2;color:#991b1b}
+.badge.approved{background:var(--ok-bg);color:var(--ok)}
+.review-bar{margin:0 0 11px;padding:10px 13px;border:1px solid #fcd34d;background:#fffbeb;
+  border-radius:8px;color:#92400e;font-size:13px;line-height:1.8}
+.review-bar b{color:#78350f}
+.review-card{border:1px dashed #f59e0b;background:#fffbeb;border-radius:var(--radius);
+  padding:16px 18px;margin-bottom:14px}
+.review-card h3{margin-bottom:6px;font-size:15px;color:#92400e}
+.review-card .rv-icon{font-size:22px;margin-right:6px}
+.review-diff{font-size:12px;color:var(--muted);line-height:1.9;background:#fff;
+  border:1px solid var(--line);border-radius:7px;padding:8px 11px;margin-top:8px}
+.review-item{border:1px solid var(--line);border-radius:9px;padding:12px 14px;margin-bottom:10px;background:#fff}
+.review-item .rv-head{display:flex;align-items:center;gap:9px;flex-wrap:wrap;margin-bottom:7px}
+.review-item .rv-head b{font-size:14px}
+.review-item .rv-meta{font-size:12px;color:var(--muted);line-height:1.9}
+.review-mini th,.review-mini td{padding:5px 8px;font-size:12px}
 /* 成绩卡片：被认定作弊的科目格子单独红框标注 */
 .subj.cheat-subj{border-color:var(--danger);background:var(--danger-bg);position:relative}
 .subj.cheat-subj .cheat-flag{position:absolute;top:-9px;right:-4px;background:var(--danger);color:#fff;
@@ -291,7 +309,8 @@ pre.log{background:var(--gray);border:1px solid var(--line);border-radius:8px;pa
          成绩查看申请与班主任审批、学生端仅显示本人选科科目、班级管理人员查看、
          批量删除学生账号、管理人员联系方式与自定义信息、管理主页多维数据卡片、
          工作台实时时间与日期、考试预告（管理员发布批次与时间）、
-         作弊记录（管理员认定 / 班主任反馈 / 年级主任接收 / 按科目分别标注 / 学生端红框逐科显示）
+         作弊记录（管理员认定 / 班主任反馈 / 年级主任接收 / 按科目分别标注 / 学生端红框逐科显示）、
+         成绩审核（班主任新增 / 修改 / 删除均提交管理员或年级主任审核，未通过前学生端显示「成绩正在审核中」）
    代码分区：① 存储与常量 ② 通用工具 ③ 业务计算与权限 ④ 路由与框架
              ⑤ 页面渲染 ⑥ 批量导入 ⑦ 图表 ⑧ 启动与数据迁移
    ===================================================================== */
@@ -310,7 +329,7 @@ const DB={
   students:      LS.get('students',[]),     // [{id,username,password,name,classId,combo,honors}]
   grades:        LS.get('grades',[]),       // ['高一','高二','高三'...]
   classes:       LS.get('classes',[]),      // [{id,name,grade}]
-  scores:        LS.get('scores',[]),       // [{id,studentId,exam,date,scores,total,createdAt}]
+  scores:        LS.get('scores',[]),       // [{id,studentId,exam,date,scores,total,createdAt,status,pendingEdit,pendingDelete,submitted*,reviewed*}]
   comments:      LS.get('comments',[]),     // [{id,studentId,authorId,authorName,authorRole,exam,date,content,createdAt}]
   announcements: LS.get('announcements',[]),// [{id,title,content,force,authorName,createdAt,updatedAt}]
   annRead:       LS.get('annRead',{}),      // { '用户id|公告id': 公告updatedAt } 强制公告已读记录
@@ -499,11 +518,68 @@ function allClassesSorted(){
     naturalCompare(a.grade||'',b.grade||'')||naturalCompare(a.name||'',b.name||''));
 }
 function allGrades(){ return DB.grades.slice().sort(naturalCompare); }
-function allExams(){ return [...new Set(DB.scores.map(r=>r.exam).filter(Boolean))].sort(); }
-/** 考试批次 = 考试名称 + 日期，用于界定"同一次考试" */
+/* ---------- 成绩审核：班主任提交 → 管理员 / 年级主任审核通过后才对学生生效 ----------
+   score.status: approved（已生效，学生端可见）| pending（待审核新增）| rejected（已驳回）
+   score.pendingEdit  : 已生效成绩的「待审修改」，审核通过前学生端仍显示原成绩
+   score.pendingDelete: 已生效成绩的「待审删除」，审核通过前成绩仍保留
+   管理员直接录入 / 导入的成绩一律 approved；旧数据自动迁移为 approved。          */
+function effectiveScores(){
+  return DB.scores.filter(r=>r.status==='approved');
+}
+/** 学生端可见成绩：已生效记录 + 待审核新增记录（以「审核中」占位展示） */
+function studentVisibleScores(stuId){
+  return DB.scores.filter(r=>r.studentId===stuId&&r.status!=='rejected');
+}
+function isPendingNew(r){ return r.status==='pending'; }
+function hasPendingChange(r){ return !!(r.pendingEdit||r.pendingDelete); }
+/** 待审核事项总数（新增 + 修改 + 删除），用于工作台统计与待办 */
+function pendingReviewItems(){
+  const out=[];
+  DB.scores.forEach(r=>{
+    if(!visibleScore(r)) return;
+    if(isPendingNew(r)) out.push({rec:r,type:'new'});
+    if(r.pendingEdit) out.push({rec:r,type:'edit'});
+    if(r.pendingDelete) out.push({rec:r,type:'delete'});
+  });
+  return out;
+}
+function pendingReviewCount(){ return pendingReviewItems().length; }
+/** 当前角色是否可审核：管理员 / 年级主任（班主任只读查看自己提交的状态） */
+function canReviewScore(){ return session&&(session.role==='admin'||session.role==='leader'); }
+/** 审核状态徽标 */
+function scoreStatusBadge(r){
+  if(r.status==='pending') return '<span class="badge pending">⏳ 待审核（新增）</span>';
+  if(r.status==='rejected') return '<span class="badge rejected">已驳回</span>';
+  if(r.pendingEdit) return '<span class="badge pending">⏳ 修改审核中</span>';
+  if(r.pendingDelete) return '<span class="badge pending">⏳ 删除审核中</span>';
+  return '<span class="badge approved">已生效</span>';
+}
+/** 提交人信息（班主任提交审核时写入） */
+function submitMeta(){
+  return {submittedBy:session.id,submittedName:session.name||session.username,
+    submittedTitle:session.title||ROLE_NAME[session.role]||'班主任',submittedAt:Date.now()};
+}
+/** 审核人信息 */
+function reviewMeta(note){
+  return {reviewedBy:session.id,
+    reviewedName:(session.title||ROLE_NAME[session.role]||'管理人员')+' '+(session.name||session.username),
+    reviewedAt:Date.now(),reviewNote:note||''};
+}
+/** 真正删除一条成绩（同时清理该次考试关联的作弊记录），审核通过删除申请时复用 */
+function removeScoreRecord(rec){
+  DB.scores=DB.scores.filter(r=>r.id!==rec.id);
+  DB.cheating=DB.cheating.filter(c=>!(c.studentId===rec.studentId&&c.exam===rec.exam&&c.date===rec.date));
+  save('scores');save('cheating');
+}
+/** 管理端成绩筛选下拉：含待审核记录，但不包含已驳回 */
+function manageExams(){
+  return [...new Set(DB.scores.filter(r=>r.status!=='rejected').map(r=>r.exam).filter(Boolean))].sort();
+}
+function allExams(){ return [...new Set(effectiveScores().map(r=>r.exam).filter(Boolean))].sort(); }
+/** 考试批次 = 考试名称 + 日期，只统计已生效成绩 */
 function allBatches(){
   const m=new Map();
-  DB.scores.forEach(r=>{ const k=r.exam+'|'+r.date; if(!m.has(k))m.set(k,{exam:r.exam,date:r.date}); });
+  effectiveScores().forEach(r=>{ const k=r.exam+'|'+r.date; if(!m.has(k))m.set(k,{exam:r.exam,date:r.date}); });
   return [...m.values()].sort((a,b)=>b.date.localeCompare(a.date));
 }
 function staffNameById(id){
@@ -523,7 +599,9 @@ function parseScore(raw,sub){
 function totalOf(scores){ return Object.values(scores).reduce((a,b)=>a+b,0); }
 function stuOf(id){ return DB.students.find(s=>s.id===id)||null; }
 function findDup(data,excludeId){
-  return DB.scores.find(r=>r.id!==excludeId&&r.studentId===data.studentId&&r.exam===data.exam&&r.date===data.date);
+  // 已驳回的记录不占用「同学生 + 同考试」名额，班主任可重新提交
+  return DB.scores.find(r=>r.id!==excludeId&&r.status!=='rejected'&&
+    r.studentId===data.studentId&&r.exam===data.exam&&r.date===data.date);
 }
 /** 权限矩阵：student 只读本人；head 本班可写；leader 全校/本年级只读；admin 全部 */
 function isStaff(){ return session && ['admin','leader','head'].includes(session.role); }
@@ -554,14 +632,14 @@ function visibleScore(r){
 function classRank(rec){
   const stu=stuOf(rec.studentId); if(!stu) return null;
   const cid=classIdOf(stu);
-  const peers=DB.scores.filter(r=>r.exam===rec.exam&&r.date===rec.date&&classIdOf(stuOf(r.studentId)||{})===cid);
+  const peers=effectiveScores().filter(r=>r.exam===rec.exam&&r.date===rec.date&&classIdOf(stuOf(r.studentId)||{})===cid);
   return {rank:peers.filter(p=>p.total>rec.total).length+1,count:peers.length};
 }
 /** 同一次考试、同年级、同选科组合的总分排名 */
 function gradeComboRank(rec){
   const stu=stuOf(rec.studentId); if(!stu) return null;
   const g=gradeOf(stu), cn=comboName(stu);
-  const peers=DB.scores.filter(r=>{
+  const peers=effectiveScores().filter(r=>{
     const s=stuOf(r.studentId);
     return r.exam===rec.exam&&r.date===rec.date&&s&&gradeOf(s)===g&&comboName(s)===cn;
   });
@@ -571,7 +649,7 @@ function gradeComboRank(rec){
 function firstNames(rec){
   const stu=stuOf(rec.studentId); if(!stu) return {grade:[],cls:[]};
   const g=gradeOf(stu), cn=comboName(stu), cid=classIdOf(stu);
-  const batch=DB.scores.filter(r=>r.exam===rec.exam&&r.date===rec.date);
+  const batch=effectiveScores().filter(r=>r.exam===rec.exam&&r.date===rec.date);
   const inCombo=r=>{ const s=stuOf(r.studentId); return s&&gradeOf(s)===g&&comboName(s)===cn; };
   const gp=batch.filter(inCombo);
   const gmax=gp.length?Math.max.apply(null,gp.map(r=>r.total)):null;
@@ -583,7 +661,7 @@ function firstNames(rec){
 }
 /** 管理端排名：按批次 + 年级 + 选科组合，返回排序后的记录及榜首 */
 function rankingData(exam,date,grade,combo){
-  let list=DB.scores.filter(r=>r.exam===exam&&r.date===date);
+  let list=effectiveScores().filter(r=>r.exam===exam&&r.date===date);
   list=list.filter(r=>{ const s=stuOf(r.studentId); return s&&gradeOf(s)===grade&&(combo==='__all__'||comboName(s)===combo); });
   const best=new Map();
   list.forEach(r=>{ if(!best.has(r.studentId)||best.get(r.studentId).total<r.total) best.set(r.studentId,r); });
@@ -612,7 +690,7 @@ function headComboList(){
 }
 /** 本班某次考试总分排名成绩单（同一学生多条取最高总分，并列同名次） */
 function headClassReport(exam,date,cid){
-  const list=DB.scores.filter(r=>r.exam===exam&&r.date===date&&
+  const list=effectiveScores().filter(r=>r.exam===exam&&r.date===date&&
     classIdOf(stuOf(r.studentId)||{})===cid);
   const best=new Map();
   list.forEach(r=>{ if(!best.has(r.studentId)||best.get(r.studentId).total<r.total)best.set(r.studentId,r); });
@@ -625,7 +703,7 @@ function headClassReport(exam,date,cid){
 }
 /** 本班某次考试「各个科目第一」的同学成绩（含并列、姓名、分数、选科） */
 function headSubjectFirsts(exam,date,cid){
-  const list=DB.scores.filter(r=>r.exam===exam&&r.date===date&&
+  const list=effectiveScores().filter(r=>r.exam===exam&&r.date===date&&
     classIdOf(stuOf(r.studentId)||{})===cid);
   return SUBJECTS.map(sub=>{
     const rows=list.filter(r=>typeof r.scores[sub]==='number');
@@ -827,7 +905,7 @@ function honorsOf(stu){ return (stu&&Array.isArray(stu.honors))?stu.honors:[]; }
 function canEditHonors(stu){ return !!session&&session.role==='head'&&canEditStudent(stu); }
 /** 某次考试单科：年级前五十 + 各班前十（并列同名次） */
 function subjectTopData(exam,date,sub){
-  const rows=DB.scores.filter(r=>r.exam===exam&&r.date===date&&typeof r.scores[sub]==='number')
+  const rows=effectiveScores().filter(r=>r.exam===exam&&r.date===date&&typeof r.scores[sub]==='number')
     .map(r=>{
       const s=stuOf(r.studentId)||{};
       return {rec:r,stu:s,name:s.name||'-',classId:classIdOf(s),className:classNameOf(s),
@@ -1114,6 +1192,7 @@ const ROUTES={
   '#/head/report':      {auth:['head'],                  render:renderHeadReport,   crumb:'首页 / 班级排名成绩单', title:'班级排名成绩单'},
   '#/students':         {auth:['admin','head'],          render:renderAdminStudents,crumb:'首页 / 学生账号管理',   title:'学生账号管理'},
   '#/scores':           {auth:['admin','leader','head'], render:renderAdminScores,  crumb:'首页 / 成绩管理',      title:'成绩管理'},
+  '#/score-reviews':    {auth:['admin','leader','head'], render:renderScoreReviews,crumb:'首页 / 成绩审核',      title:'成绩审核'},
   '#/stats':            {auth:['admin','leader','head'], render:renderAdminStats,   crumb:'首页 / 统计分析',      title:'统计分析'},
   '#/ranking':          {auth:['admin','leader','head'], render:renderRanking,      crumb:'首页 / 选科年级排名',   title:'选科年级排名'},
   '#/comments':         {auth:['admin','leader','head'], render:renderAdminComments,crumb:'首页 / 评语管理',      title:'评语管理'},
@@ -1136,16 +1215,16 @@ const ROUTES={
 };
 function navItems(role){
   const sets={
-    admin:[['#/admin','总览'],['#/students','学生账号'],['#/scores','成绩管理'],['#/stats','统计分析'],
+    admin:[['#/admin','总览'],['#/students','学生账号'],['#/scores','成绩管理'],['#/score-reviews','成绩审核'],['#/stats','统计分析'],
            ['#/ranking','选科排名'],['#/subject-top','单科榜单'],['#/comments','评语管理'],
            ['#/announcements','公告管理'],['#/exam-notices','考试预告'],['#/cheating','作弊记录'],
            ['#/message-send','发送消息'],['#/honors','职称奖项'],
            ['#/requests','查看申请'],['#/org','组织与人员'],['#/data','数据管理']],
-    leader:[['#/leader','总览'],['#/scores','成绩查看'],['#/stats','统计分析'],['#/ranking','选科排名'],
+    leader:[['#/leader','总览'],['#/scores','成绩查看'],['#/score-reviews','成绩审核'],['#/stats','统计分析'],['#/ranking','选科排名'],
             ['#/subject-top','单科榜单'],['#/comments','评语管理'],['#/announcements','公告查看'],
             ['#/exam-notices','考试预告'],['#/cheating','作弊反馈'],
             ['#/message-send','发送消息'],['#/honors','职称奖项'],['#/requests','查看申请']],
-    head:[['#/head','总览'],['#/head/report','班级成绩单'],['#/students','本班学生'],['#/scores','本班成绩'],
+    head:[['#/head','总览'],['#/head/report','班级成绩单'],['#/students','本班学生'],['#/scores','本班成绩'],['#/score-reviews','审核状态'],
           ['#/stats','统计分析'],['#/ranking','选科排名'],['#/subject-top','单科榜单'],
           ['#/comments','评语管理'],['#/announcements','公告查看'],['#/exam-notices','考试预告'],
           ['#/cheating','作弊反馈'],['#/message-send','发送消息'],
@@ -1157,9 +1236,11 @@ function navItems(role){
   return (sets[role]||[]).map(([h,t])=>{
     const unread=(h==='#/messages')?unreadMessageCount():0;
     const cheatN=(h==='#/student/cheating'&&session&&session.role==='student')?confirmedCheating(session.id).length:0;
+    const rvN=(h==='#/score-reviews'&&session&&canReviewScore())?pendingReviewCount():0;
     return '<a href="'+h+'" class="'+(location.hash===h?'active':'')+'">'+t+
       (unread?' <span class="badge gold">'+unread+'</span>':'')+
-      (cheatN?' <span class="badge cheat">'+cheatN+'</span>':'')+'</a>';
+      (cheatN?' <span class="badge cheat">'+cheatN+'</span>':'')+
+      (rvN?' <span class="badge pending">'+rvN+'</span>':'')+'</a>';
   }).join('');
 }
 /** 页面外壳：导航栏 + 角色标识 + 面包屑 */
@@ -1312,14 +1393,14 @@ function renderLogin(){
 
 /* ----- 管理员总览 ----- */
 function renderAdminHome(){
-  const recent=[...DB.scores].sort((a,b)=>b.createdAt-a.createdAt).slice(0,5);
+  const recent=[...effectiveScores()].sort((a,b)=>b.createdAt-a.createdAt).slice(0,5);
   const rows=recent.map(r=>{
     const s=stuOf(r.studentId)||{};
     return '<tr><td>'+esc(r.date)+'</td><td>'+esc(r.exam)+'</td><td>'+esc(s.name||'已删除学生')+'</td>'+
       '<td>'+esc(classNameOf(s))+'</td><td>'+esc(gradeOf(s))+'</td><td>'+esc(comboName(s))+'</td>'+
       '<td><b>'+fmtNum(r.total)+'</b></td></tr>';
   }).join('')||'<tr><td colspan="7" class="empty">暂无成绩记录</td></tr>';
-  const sum=scoreSummary(DB.scores);
+  const sum=scoreSummary(effectiveScores());
   const pending=DB.gradeRequests.filter(q=>q.status==='pending').length;
   const forced=DB.announcements.filter(a=>a.force).length;
   const honors=DB.students.reduce((n,s)=>n+honorsOf(s).length,0);
@@ -1333,15 +1414,17 @@ function renderAdminHome(){
     '<div class="stat-grid">'+
       infoStat('年级数',DB.grades.length)+infoStat('班级数',DB.classes.length)+
       infoStat('学生账号',DB.students.length)+infoStat('管理人员',DB.staff.length)+
-      infoStat('成绩记录',DB.scores.length)+infoStat('考试批次',batches.length)+
+      infoStat('成绩记录',effectiveScores().length)+infoStat('考试批次',batches.length)+
       infoStat('待审批申请',pending)+infoStat('职称奖项',honors)+
       infoStat('作弊记录',cheatConfirmed)+infoStat('待接收反馈',cheatPending)+
+      infoStat('待审核成绩',pendingReviewCount())+
     '</div>'+
     '<div class="card"><h2>快捷操作 <span class="tag">管理员面板</span></h2>'+
       '<div style="display:flex;gap:10px;flex-wrap:wrap">'+
         '<a class="btn primary" href="#/org">新增年级 / 班级 / 管理人员</a>'+
         '<a class="btn primary" href="#/students">新增学生账号（选班级与选科）</a>'+
         '<a class="btn ghost" href="#/scores">录入成绩</a>'+
+        '<a class="btn primary" href="#/score-reviews">成绩审核（班主任提交）</a>'+
         '<a class="btn ghost" href="#/ranking">选科排名</a>'+
         '<a class="btn ghost" href="#/subject-top">单科榜单</a>'+
         '<a class="btn ghost" href="#/comments">撰写评语</a>'+
@@ -1356,12 +1439,13 @@ function renderAdminHome(){
     '<div class="grid g2">'+
       '<div class="card"><h2>待办与提醒</h2>'+
         '<div class="notice-line"><span>📝 待审批成绩查看申请</span><span><b>'+pending+'</b> 条 · <a href="#/requests">去查看</a></span></div>'+
+        '<div class="notice-line"><span>⏳ 待审核成绩提交</span><span><b>'+pendingReviewCount()+'</b> 项 · <a href="#/score-reviews">去审核</a></span></div>'+
         '<div class="notice-line"><span>📢 强制展示公告</span><span><b>'+forced+'</b> 条 · <a href="#/announcements">去管理</a></span></div>'+
         '<div class="notice-line"><span>⚠ 待接收作弊反馈</span><span><b>'+cheatPending+'</b> 条 · <a href="#/cheating">去处理</a></span></div>'+
         '<div class="notice-line"><span>👤 未分班学生</span><span><b>'+unclassified+'</b> 人 · <a href="#/students">去处理</a></span></div>'+
         '<div class="notice-line"><span>🗓 最近考试日期</span><span><b>'+esc(latest)+'</b></span></div>'+
       '</div>'+
-      '<div class="card"><h2>成绩概览 <span class="tag">全部成绩记录</span></h2>'+
+      '<div class="card"><h2>成绩概览 <span class="tag">仅已生效成绩</span></h2>'+
         '<div class="stat-grid" style="grid-template-columns:repeat(2,minmax(0,1fr));gap:10px">'+
           infoStat('平均总分',sum.avg===null?'—':fmtNum(sum.avg))+
           infoStat('最高总分',sum.max===null?'—':fmtNum(sum.max))+
@@ -1471,7 +1555,7 @@ function renderHeadReport(){
 function renderStaffHome(){
   const role=session.role;
   const mine=visibleStudents();
-  const myScores=DB.scores.filter(visibleScore);
+  const myScores=effectiveScores().filter(visibleScore);
   const myClass=DB.classes.find(c=>c.id===session.classId);
   const scopeTxt=role==='head'
     ? '管辖班级：'+(myClass?classLabel(myClass):UNCLASSIFIED)
@@ -1495,10 +1579,12 @@ function renderStaffHome(){
       infoStat('待处理申请',pending)+infoStat('职称奖项',honors)+
       infoStat('已发消息',sentMsgs)+infoStat(role==='head'?'本班选科组合':'涉及班级',role==='head'?combos:classCount)+
       infoStat('作弊记录',cheatConfirmed)+infoStat('待接收反馈',pendingCheatingCount())+
+      infoStat('待审核成绩',pendingReviewCount())+
     '</div>'+
     '<div class="card"><h2>'+esc(session.title||ROLE_NAME[role])+'工作台 <span class="tag">'+esc(scopeTxt)+'</span></h2>'+
       '<div style="display:flex;gap:10px;flex-wrap:wrap">'+
-        (role==='head'?'<a class="btn primary" href="#/students">管理本班学生</a><a class="btn primary" href="#/scores">录入本班成绩</a>':'<a class="btn primary" href="#/scores">查看成绩记录</a>')+
+        (role==='head'?'<a class="btn primary" href="#/students">管理本班学生</a><a class="btn primary" href="#/scores">提交本班成绩</a>':'<a class="btn primary" href="#/scores">查看成绩记录</a>')+
+        '<a class="btn '+(role==='head'?'ghost':'primary')+'" href="#/score-reviews">'+(role==='head'?'查看提交审核状态':'审核班主任提交')+'</a>'+
         '<a class="btn ghost" href="#/ranking">选科排名</a>'+
         '<a class="btn ghost" href="#/subject-top">单科榜单</a>'+
         '<a class="btn ghost" href="#/comments">评语管理</a>'+
@@ -1521,6 +1607,7 @@ function renderStaffHome(){
       '</div>'+
       '<div class="card"><h2>待办与提醒</h2>'+
         '<div class="notice-line"><span>📝 待处理成绩查看申请</span><span><b>'+pending+'</b> 条 · <a href="#/requests">'+(role==='head'?'去审批':'去查看')+'</a></span></div>'+
+        '<div class="notice-line"><span>⏳ 待审核成绩提交</span><span><b>'+pendingReviewCount()+'</b> 项 · <a href="#/score-reviews">'+(role==='head'?'查看进度':'去审核')+'</a></span></div>'+
         '<div class="notice-line"><span>📢 强制展示公告</span><span><b>'+forced+'</b> 条 · <a href="#/announcements">去查看</a></span></div>'+
         '<div class="notice-line"><span>⚠ 待接收作弊反馈</span><span><b>'+pendingCheatingCount()+'</b> 条 · <a href="#/cheating">'+(role==='head'?'去查看':'去接收')+'</a></span></div>'+
         '<div class="notice-line"><span>🏆 '+(role==='head'?'本班':'权限内')+'职称奖项</span><span><b>'+honors+'</b> 条 · <a href="#/honors">去查看</a></span></div>'+
@@ -2263,23 +2350,27 @@ function collectScoreForm(p){
 }
 function renderAdminScores(){
   const readOnly=session.role==='leader';
+  const isHead=session.role==='head';
   const visibleIds=new Set(visibleStudents().map(classIdOf));
   const classOpts='<option value="">全部班级</option>'+allClassesSorted()
     .filter(c=>visibleIds.has(c.id)).map(c=>
     '<option value="'+esc(c.id)+'"'+(scoreFilter.classId===c.id?' selected':'')+'>'+esc(classLabel(c))+'</option>').join('');
-  const examOpts='<option value="">全部考试</option>'+allExams().map(e=>
+  // 管理端筛选下拉包含待审核考试名（已驳回除外），学生端与统计只用已生效批次
+  const examOpts='<option value="">全部考试</option>'+manageExams().map(e=>
     '<option value="'+esc(e)+'"'+(scoreFilter.exam===e?' selected':'')+'>'+esc(e)+'</option>').join('');
   const addCard=readOnly?'':
-    '<div class="card"><h2>新增成绩 <span class="tag">总分自动计算</span></h2>'+
+    '<div class="card"><h2>'+(isHead?'提交成绩（需审核）':'新增成绩')+' <span class="tag">总分自动计算</span></h2>'+
+      (isHead?'<div class="review-bar">⏳ 班主任提交的成绩不会立即显示给学生，需 <b>管理员</b> 或 <b>年级主任</b> 在「成绩审核」中通过后生效；提交后学生端显示「成绩正在审核中」。</div>':'')+
       scoreFieldsHtml('add',null)+
       '<div style="display:flex;gap:9px;flex-wrap:wrap;margin-top:14px">'+
-        '<button class="btn primary" id="a-submit">保存成绩</button>'+
+        '<button class="btn primary" id="a-submit">'+(isHead?'提交成绩审核':'保存成绩')+'</button>'+
         '<button class="btn ghost" id="a-reset">清空表单</button>'+
         (session.role==='admin'?'<button class="btn ghost" id="a-import">批量导入成绩（文本粘贴）</button>':'')+
       '</div>'+
     '</div>';
   const content=addCard+
     '<div class="card"><h2>'+(readOnly?'成绩记录（只读）':'全部成绩记录')+' <span class="tag" id="a-count"></span></h2>'+
+      (isHead?'<p class="hint" style="margin-bottom:10px">对已生效成绩的「编辑 / 删除」同样需提交审核；审核通过前学生端仍显示原成绩并提示审核中。</p>':'')+
       '<div class="grid g3" style="margin-bottom:14px">'+
         '<div class="field"><label>按班级筛选</label><select id="f-class">'+classOpts+'</select></div>'+
         '<div class="field"><label>按考试名称筛选</label><select id="f-exam">'+examOpts+'</select></div>'+
@@ -2287,7 +2378,7 @@ function renderAdminScores(){
       '</div>'+
       '<div class="table-scroll"><table><thead><tr>'+
         '<th>日期</th><th>考试</th><th>学生</th><th>班级</th><th>年级</th><th>选科</th>'+
-        SUBJECTS.map(s=>'<th>'+s+'</th>').join('')+'<th>总分</th><th>违纪标注</th>'+(readOnly?'':'<th>操作</th>')+
+        SUBJECTS.map(s=>'<th>'+s+'</th>').join('')+'<th>总分</th><th>审核状态</th><th>违纪标注</th>'+(readOnly?'':'<th>操作</th>')+
       '</tr></thead><tbody id="scoreTableBody"></tbody></table></div>'+
     '</div>';
   mount(page('成绩管理','首页 / 成绩管理',content));
@@ -2297,9 +2388,17 @@ function renderAdminScores(){
     $('a-submit').onclick=()=>{
       const r=collectScoreForm('add');
       if(!r.ok) return toast(r.msg,'err');
-      if(findDup(r.data,null)) return toast('该学生本次考试成绩已存在，请在下方列表点击「编辑」','err');
-      DB.scores.push(Object.assign({id:uid(),createdAt:Date.now()},r.data));
-      save('scores'); toast('成绩已保存','ok'); renderAdminScores();
+      if(findDup(r.data,null)) return toast('该学生本次考试成绩已存在（含待审核记录），请在下方列表点击「编辑」','err');
+      const headSubmit=session.role==='head';
+      DB.scores.push(Object.assign({id:uid(),createdAt:Date.now(),
+        status:headSubmit?'pending':'approved',
+        pendingEdit:null,pendingDelete:null,
+        submittedBy:null,submittedName:'',submittedTitle:'',submittedAt:null,
+        reviewedBy:null,reviewedName:'',reviewedAt:null,reviewNote:''},
+        headSubmit?submitMeta():{}, r.data));
+      save('scores');
+      toast(headSubmit?'成绩已提交，等待管理员 / 年级主任审核':'成绩已保存','ok');
+      renderAdminScores();
     };
     $('a-reset').onclick=()=>renderAdminScores();
     if($('a-import')) $('a-import').onclick=()=>openImportScores();
@@ -2321,18 +2420,36 @@ function filteredScores(){
 function refreshScoreTable(){
   const list=filteredScores(), body=$('scoreTableBody'); if(!body)return;
   const readOnly=session.role==='leader';
-  $('a-count').textContent='共 '+list.length+' 条';
+  const isHead=session.role==='head';
+  const pending=list.filter(r=>isPendingNew(r)||hasPendingChange(r)).length;
+  $('a-count').textContent='共 '+list.length+' 条'+(pending?' · 待审核 '+pending+' 条':'');
   body.innerHTML=list.map(r=>{
     const s=stuOf(r.studentId)||{};
+    const unapproved=r.status==='pending'||r.status==='rejected';
+    let ops='';
+    if(!readOnly){
+      const btns=[];
+      if(session.role==='admin'||!hasPendingChange(r))
+        btns.push('<button class="btn ghost sm" data-edit="'+esc(r.id)+'">编辑</button>');
+      if(session.role==='admin')
+        btns.push('<button class="btn ghost sm" style="color:var(--danger)" data-scheat="'+esc(r.id)+'">标记作弊</button>');
+      const delLabel=isHead
+        ? (unapproved?'撤回提交':(hasPendingChange(r)?'撤销申请':'申请删除'))
+        : '删除';
+      if(session.role==='admin'||!hasPendingChange(r)||unapproved)
+        btns.push('<button class="btn ghost sm" style="color:var(--danger)" data-delscore="'+esc(r.id)+'">'+delLabel+'</button>');
+      if(isHead&&hasPendingChange(r))
+        btns.push('<span class="badge pending">申请已提交</span>');
+      ops='<td><div class="ops">'+btns.join('')+'</div></td>';
+    }
     return '<tr><td>'+esc(r.date)+'</td><td>'+esc(r.exam)+'</td><td>'+esc(s.name||'已删除学生')+'</td>'+
       '<td>'+esc(classNameOf(s))+'</td><td>'+esc(gradeOf(s))+'</td><td>'+esc(comboName(s))+'</td>'+
       SUBJECTS.map(sub=>'<td>'+(typeof r.scores[sub]==='number'?fmtNum(r.scores[sub]):'—')+'</td>').join('')+
       '<td><b>'+fmtNum(r.total)+'</b></td>'+
+      '<td>'+scoreStatusBadge(r)+'</td>'+
       '<td>'+(cheatBadgeHtml(s.id,r.exam,r.date)||'<span class="badge soft">正常</span>')+'</td>'+
-      (readOnly?'':'<td><div class="ops"><button class="btn ghost sm" data-edit="'+esc(r.id)+'">编辑</button>'+
-        (session.role==='admin'?'<button class="btn ghost sm" style="color:var(--danger)" data-scheat="'+esc(r.id)+'">标记作弊</button>':'')+
-        '<button class="btn ghost sm" style="color:var(--danger)" data-delscore="'+esc(r.id)+'">删除</button></div></td>')+'</tr>';
-  }).join('')||'<tr><td colspan="'+(readOnly?17:18)+'" class="empty">暂无成绩记录，请先录入或调整筛选条件</td></tr>';
+      ops+'</tr>';
+  }).join('')||'<tr><td colspan="'+(readOnly?18:19)+'" class="empty">暂无成绩记录，请先录入或调整筛选条件</td></tr>';
   document.querySelectorAll('[data-edit]').forEach(b=>b.onclick=()=>openEditScore(b.dataset.edit));
   document.querySelectorAll('[data-delscore]').forEach(b=>b.onclick=()=>delScore(b.dataset.delscore));
   document.querySelectorAll('[data-scheat]').forEach(b=>b.onclick=()=>toggleScoreCheat(b.dataset.scheat));
@@ -2375,15 +2492,36 @@ function openEditScore(id){
   const rec=DB.scores.find(r=>r.id===id); if(!rec)return;
   const s=stuOf(rec.studentId);
   if(!canEditStudent(s)) return toast('权限不足：只能修改本班成绩','err');
+  const isHead=session.role==='head';
+  const resubmit=rec.status==='pending'||rec.status==='rejected';
+  if(isHead&&hasPendingChange(rec)) return toast('已有待审核的修改 / 删除申请，请等待审核结果','err');
   openModal({
-    title:'编辑成绩 · '+(s?s.name:''),
-    body:scoreFieldsHtml('edit',rec),width:800,okText:'保存修改',
+    title:(isHead?(resubmit?'修改并重新提交审核 · ':'提交成绩修改审核 · '):'编辑成绩 · ')+(s?s.name:''),
+    body:(isHead?'<div class="review-bar">本次修改需 <b>管理员</b> 或 <b>年级主任</b> 审核通过后才生效；'+
+      '审核期间学生端仍显示原成绩，并提示「成绩正在审核中」。</div>':'')+scoreFieldsHtml('edit',rec),
+    width:800,okText:isHead?'提交审核':'保存修改',
     onOpen(){ bindScoreForm('edit'); },
     onOk(){
       const r=collectScoreForm('edit');
       if(!r.ok){ toast(r.msg,'err'); return false; }
-      if(findDup(r.data,rec.id)){ toast('同一学生本次考试已存在其它记录','err'); return false; }
-      Object.assign(rec,r.data); save('scores'); toast('成绩已更新','ok'); renderAdminScores(); return true;
+      if(findDup(r.data,rec.id)){ toast('同一学生本次考试已存在其它记录（含待审核记录）','err'); return false; }
+      if(isHead){
+        if(resubmit){
+          // 待审核 / 已驳回的「新增」记录：直接改内容并重新提交
+          Object.assign(rec,r.data,submitMeta(),{status:'pending',reviewNote:''});
+          toast('已修改并重新提交审核','ok');
+        }else{
+          // 已生效成绩：保存为「待审修改」，原成绩继续对学生生效
+          rec.pendingEdit=Object.assign({},r.data,submitMeta());
+          toast('成绩修改已提交审核','ok');
+        }
+      }else{
+        // 管理员直接定稿：清除所有待审标记，记录审核信息
+        Object.assign(rec,r.data,reviewMeta('管理员直接修改，无需审核'),
+          {status:'approved',pendingEdit:null,pendingDelete:null});
+        toast('成绩已更新','ok');
+      }
+      save('scores'); renderAdminScores(); return true;
     }
   });
 }
@@ -2391,12 +2529,187 @@ async function delScore(id){
   const rec=DB.scores.find(r=>r.id===id); if(!rec)return;
   const s=stuOf(rec.studentId);
   if(!canEditStudent(s)) return toast('权限不足','err');
+  const isHead=session.role==='head';
+  const unapproved=rec.status==='pending'||rec.status==='rejected';
+  // 班主任：撤回自己的待审新增，或撤销尚未处理的删除申请
+  if(isHead&&(unapproved||rec.pendingDelete)){
+    const title=unapproved?'撤回成绩提交':'撤销删除申请';
+    const msg=unapproved
+      ? '撤回 <b>'+esc(s?s.name:'已删除学生')+'</b> 的「'+esc(rec.exam)+' · '+esc(rec.date)+'」待审核成绩提交吗？'
+      : '撤销该次成绩的删除申请吗？成绩将继续保持生效。';
+    if(!await confirmDialog(title,msg,'确认撤回'))return;
+    if(unapproved){ removeScoreRecord(rec); toast('已撤回成绩提交','ok'); }
+    else { rec.pendingDelete=null; save('scores'); toast('已撤销删除申请','ok'); }
+    renderAdminScores(); return;
+  }
+  // 班主任：对已生效成绩提交「删除申请」
+  if(isHead){
+    if(hasPendingChange(rec)) return toast('已有待审核申请，请等待审核结果','err');
+    const ok=await confirmDialog('提交成绩删除申请',
+      '将向 <b>管理员 / 年级主任</b> 提交对 <b>'+esc(s?s.name:'已删除学生')+'</b> 的「'+
+      esc(rec.exam)+' · '+esc(rec.date)+'」成绩删除申请。<br>'+
+      '审核通过前学生端仍显示该成绩并提示审核中。','提交申请');
+    if(!ok)return;
+    rec.pendingDelete=submitMeta();
+    save('scores'); toast('删除申请已提交审核','ok'); renderAdminScores(); return;
+  }
+  // 管理员：直接删除
   const ok=await confirmDialog('删除成绩',
     '确定删除 <b>'+esc(s?s.name:'已删除学生')+'</b> 的「'+esc(rec.exam)+' · '+esc(rec.date)+'」成绩吗？<br>总分 <b>'+fmtNum(rec.total)+'</b>，该次考试关联的作弊记录也会一并删除，操作不可恢复。','确认删除');
   if(!ok)return;
-  DB.scores=DB.scores.filter(r=>r.id!==id);
-  DB.cheating=DB.cheating.filter(c=>!(c.studentId===rec.studentId&&c.exam===rec.exam&&c.date===rec.date));
-  save('scores');save('cheating'); toast('已删除成绩','ok'); renderAdminScores();
+  removeScoreRecord(rec); toast('已删除成绩','ok'); renderAdminScores();
+}
+
+/* ----- 成绩审核：管理员 / 年级主任审核班主任提交的成绩（班主任只读） ----- */
+const REVIEW_TYPE_NAME={new:'新增成绩',edit:'成绩修改',delete:'成绩删除'};
+/** 分数对比小表：新增 / 修改 / 删除 三种事项统一展示 */
+function reviewScoreTableHtml(rec,type){
+  const s=stuOf(rec.studentId)||{};
+  const data=(type==='edit'&&rec.pendingEdit)?rec.pendingEdit:null;
+  const head='<thead><tr><th>科目</th><th>'+(type==='edit'?'原成绩':'分数')+'</th>'+
+    (type==='edit'?'<th>拟修改为</th>':'')+'</tr></thead>';
+  const rows=SUBJECTS.filter(sub=>
+      typeof rec.scores[sub]==='number'||(data&&typeof data.scores[sub]==='number'))
+    .map(sub=>{
+      const a=typeof rec.scores[sub]==='number'?fmtNum(rec.scores[sub]):'—';
+      const b=data?(typeof data.scores[sub]==='number'?fmtNum(data.scores[sub]):'—'):'';
+      const changed=data&&a!==b;
+      return '<tr><td>'+sub+'</td><td>'+a+'</td>'+
+        (type==='edit'?'<td'+(changed?' style="color:var(--danger);font-weight:700"':'')+'>'+b+(changed?' ✎':'')+'</td>':'')+'</tr>';
+    }).join('');
+  return '<table class="review-mini">'+head+'<tbody>'+rows+'</tbody></table>'+
+    '<div class="hint" style="margin-top:6px">总分：'+fmtNum(rec.total)+
+    (data?' → <b>'+fmtNum(data.total)+'</b>':'')+
+    (data&&(data.exam!==rec.exam||data.date!==rec.date)?
+      ' ｜ 考试：'+esc(rec.exam+' · '+rec.date)+' → <b>'+esc(data.exam+' · '+data.date)+'</b>':'')+
+    ' ｜ 学生：'+esc(s.name||'已删除学生')+'</div>';
+}
+function reviewItemHtml(item){
+  const {rec,type}=item;
+  const s=stuOf(rec.studentId)||{};
+  const meta=type==='new'?rec:(type==='edit'?rec.pendingEdit:rec.pendingDelete)||{};
+  const typeBadge='<span class="badge '+(type==='delete'?'rejected':'pending')+'">'+REVIEW_TYPE_NAME[type]+'</span>';
+  const ops=canReviewScore()
+    ? '<div class="ops" style="margin-top:10px">'+
+      '<button class="btn primary sm" data-rvok="'+esc(rec.id)+'" data-rvtype="'+type+'">审核通过</button>'+
+      '<button class="btn ghost sm" style="color:var(--danger)" data-rvno="'+esc(rec.id)+'" data-rvtype="'+type+'">驳回</button></div>'
+    : '<p class="hint" style="margin-top:8px">等待管理员 / 年级主任审核</p>';
+  return '<div class="review-item"><div class="rv-head">'+typeBadge+
+    '<b>'+esc(s.name||'已删除学生')+'</b><span class="hint">'+esc(classLabel(DB.classes.find(c=>c.id===classIdOf(s))||null))+'</span>'+
+    '<span class="badge soft">'+esc(rec.exam+' · '+rec.date)+'</span></div>'+
+    '<div class="rv-meta">提交人：'+esc((meta.submittedTitle||'班主任')+' '+(meta.submittedName||'—'))+
+      ' ｜ 提交时间：'+esc(meta.submittedAt?new Date(meta.submittedAt).toLocaleString():'—')+'</div>'+
+    (type==='delete'?'<div class="hint" style="margin-top:6px">申请删除该次成绩（审核通过前学生端仍显示原成绩）。</div>':'')+
+    '<div style="margin-top:9px">'+reviewScoreTableHtml(rec,type)+'</div>'+ops+'</div>';
+}
+/** 执行审核：action = approve / reject */
+async function doScoreReview(recId,type,action){
+  const rec=DB.scores.find(r=>r.id===recId); if(!rec)return;
+  if(!canReviewScore()) return toast('权限不足：仅管理员 / 年级主任可审核','err');
+  if(!visibleScore(rec)) return toast('权限不足：该成绩不在你的管辖范围','err');
+  const s=stuOf(rec.studentId)||{};
+  const verb=action==='approve'?'通过':'驳回';
+  const tip=action==='approve'
+    ? (type==='delete'?'通过后该成绩将被<b>永久删除</b>，学生端不再显示。'
+        :'通过后该次成绩'+(type==='edit'?'按修改内容':'')+'<b>立即对学生端生效</b>。')
+    : (type==='new'?'驳回后该记录标记为「已驳回」，学生端不会看到，班主任可重新提交。'
+        :'驳回后原成绩保持不变，待审'+(type==='edit'?'修改':'删除申请')+'将被清除。');
+  let note='';
+  const ok=await openModal({
+    title:verb+' · '+REVIEW_TYPE_NAME[type]+' · '+(s.name||''),width:520,
+    okText:'确认'+verb,
+    body:'<p class="confirm-text">'+esc(rec.exam+' · '+rec.date)+'<br>'+tip+'</p>'+
+      '<div class="field" style="margin-top:12px"><label>审核意见（可留空）</label>'+
+      '<textarea class="inp" id="rv-note" placeholder="如：分数核对无误 / 请补充监考记录"></textarea></div>',
+    onOk(root){ note=root.querySelector('#rv-note').value.trim(); return true; }
+  });
+  if(!ok)return;
+  if(action==='approve'&&type==='delete'){
+    const ok2=await confirmDialog('二次确认 · 删除成绩',
+      '审核通过后将删除 <b>'+esc(s.name||'学生')+'</b> 的「'+esc(rec.exam+' · '+rec.date)+'」成绩及其关联作弊记录，操作不可恢复。','确认删除');
+    if(!ok2)return;
+  }
+  if(type==='new'){
+    if(action==='approve'){ rec.status='approved'; rec.pendingEdit=null; rec.pendingDelete=null; }
+    else rec.status='rejected';
+    Object.assign(rec,reviewMeta(note));
+  }else if(type==='edit'){
+    const pe=rec.pendingEdit;
+    if(!pe) return toast('该申请已不存在','err');
+    if(action==='approve'){
+      // 修改后考试名 / 日期若与其它记录冲突，则拒绝通过并提示
+      const dup=DB.scores.find(r=>r.id!==rec.id&&r.status!=='rejected'&&
+        r.studentId===rec.studentId&&r.exam===pe.exam&&r.date===pe.date);
+      if(dup) return toast('审核未通过：该学生「'+pe.exam+' '+pe.date+'」已有其它成绩记录','err');
+      Object.assign(rec,{exam:pe.exam,date:pe.date,scores:pe.scores,total:pe.total});
+    }
+    rec.pendingEdit=null;
+    Object.assign(rec,reviewMeta(note));
+  }else if(type==='delete'){
+    if(!rec.pendingDelete) return toast('该申请已不存在','err');
+    if(action==='approve'){ removeScoreRecord(rec); toast('已通过删除申请，成绩已移除','ok'); renderScoreReviews(); return; }
+    rec.pendingDelete=null;
+    Object.assign(rec,reviewMeta(note));
+  }
+  save('scores');
+  toast(action==='approve'?'审核通过，成绩已对学生生效':'已驳回该申请','ok');
+  renderScoreReviews();
+}
+function renderScoreReviews(){
+  const items=pendingReviewItems().filter(it=>visibleScore(it.rec));
+  const rejected=DB.scores.filter(r=>r.status==='rejected'&&visibleScore(r))
+    .sort((a,b)=>(b.reviewedAt||0)-(a.reviewedAt||0));
+  const reviewed=DB.scores.filter(r=>r.status==='approved'&&r.reviewedAt&&visibleScore(r))
+    .sort((a,b)=>b.reviewedAt-a.reviewedAt).slice(0,10);
+  const roleTip=canReviewScore()
+    ? '你是审核人：可「通过」或「驳回」班主任提交的成绩；通过后立即对学生端生效。'
+    : '班主任只读：可查看自己提交事项的审核进度与驳回意见，已驳回的可重新提交。';
+  const content=
+    '<div class="card"><h2>成绩审核 <span class="tag">待审核 '+items.length+' 项</span></h2>'+
+      '<div class="review-bar">⏳ 班主任提交的新增 / 修改 / 删除需经 <b>管理员</b> 或 <b>年级主任</b> 审核；'+
+      '未通过前学生端不显示待审分数，已有成绩会标注「成绩正在审核中」。</div>'+
+      '<p class="hint">'+roleTip+'</p></div>'+
+    '<div class="card"><h2>待审核事项 <span class="tag">共 '+items.length+' 项</span></h2>'+
+      (items.length?items.map(reviewItemHtml).join(''):'<div class="empty">暂无待审核事项 ✅</div>')+'</div>'+
+    (rejected.length?'<div class="card"><h2>已驳回 <span class="tag">共 '+rejected.length+' 条</span></h2>'+
+      rejected.map(r=>{
+        const s=stuOf(r.studentId)||{};
+        const mine=session.role==='head'&&r.submittedBy===session.id;
+        return '<div class="review-item"><div class="rv-head"><span class="badge rejected">已驳回</span>'+
+          '<b>'+esc(s.name||'已删除学生')+'</b><span class="hint">'+esc(r.exam+' · '+r.date)+'</span></div>'+
+          '<div class="rv-meta">审核人：'+esc(r.reviewedName||'—')+
+            ' ｜ 时间：'+esc(r.reviewedAt?new Date(r.reviewedAt).toLocaleString():'—')+
+            '<br>驳回意见：'+esc(r.reviewNote||'无')+'</div>'+
+          (mine?'<div class="ops" style="margin-top:9px">'+
+            '<button class="btn primary sm" data-rvresub="'+esc(r.id)+'">修改后重新提交</button>'+
+            '<button class="btn ghost sm" data-rvdrop="'+esc(r.id)+'">放弃提交</button></div>':'')+
+        '</div>';
+      }).join('')+'</div>':'')+
+    (reviewed.length?'<div class="card"><h2>最近审核通过</h2><div class="table-scroll"><table>'+
+      '<thead><tr><th>学生</th><th>考试</th><th>总分</th><th>审核人</th><th>时间</th><th>意见</th></tr></thead><tbody>'+
+      reviewed.map(r=>{
+        const s=stuOf(r.studentId)||{};
+        return '<tr><td>'+esc(s.name||'—')+'</td><td>'+esc(r.exam+' · '+r.date)+'</td>'+
+          '<td>'+fmtNum(r.total)+'</td><td>'+esc(r.reviewedName||'—')+'</td>'+
+          '<td>'+esc(r.reviewedAt?new Date(r.reviewedAt).toLocaleString():'—')+'</td>'+
+          '<td style="white-space:normal">'+esc(r.reviewNote||'—')+'</td></tr>';
+      }).join('')+'</tbody></table></div></div>':'');
+  mount(page('成绩审核','首页 / 成绩审核',content));
+  document.querySelectorAll('[data-rvok]').forEach(b=>b.onclick=()=>
+    doScoreReview(b.dataset.rvok,b.dataset.rvtype,'approve'));
+  document.querySelectorAll('[data-rvno]').forEach(b=>b.onclick=()=>
+    doScoreReview(b.dataset.rvno,b.dataset.rvtype,'reject'));
+  document.querySelectorAll('[data-rvresub]').forEach(b=>b.onclick=()=>{
+    const r=DB.scores.find(x=>x.id===b.dataset.rvresub); if(!r)return;
+    Object.assign(r,submitMeta(),{status:'pending',reviewNote:'',reviewedBy:null,
+      reviewedName:'',reviewedAt:null,pendingEdit:null,pendingDelete:null});
+    save('scores'); toast('已重新提交审核','ok'); renderScoreReviews();
+  });
+  document.querySelectorAll('[data-rvdrop]').forEach(b=>b.onclick=async()=>{
+    const r=DB.scores.find(x=>x.id===b.dataset.rvdrop); if(!r)return;
+    if(!await confirmDialog('放弃提交','确定放弃并删除这条被驳回的成绩提交吗？','确认放弃'))return;
+    removeScoreRecord(r); toast('已放弃提交','ok'); renderScoreReviews();
+  });
 }
 
 /* ----- 统计分析：单科平均分/最高分/最低分 + 班级总分排名 ----- */
@@ -2422,7 +2735,7 @@ function renderAdminStats(){
   mount(page('统计分析','首页 / 统计分析',content));
   const computeStats=()=>{
     const ex=val('st-exam'),cl=val('st-class');
-    const list=DB.scores.filter(r=>{
+    const list=effectiveScores().filter(r=>{
       if(!visibleScore(r))return false;
       if(ex&&r.exam!==ex)return false;
       if(cl&&classIdOf(stuOf(r.studentId)||{})!==cl)return false;
@@ -2443,7 +2756,7 @@ function renderAdminStats(){
     const b=val('rk-batch'),cl=val('rk-class');
     if(!b||!cl){ $('rk-result').innerHTML='<div class="empty">请先录入成绩并选择考试批次与班级</div>'; return; }
     const [exam,date]=b.split('|');
-    const list=DB.scores.filter(r=>r.exam===exam&&r.date===date&&visibleScore(r)&&
+    const list=effectiveScores().filter(r=>r.exam===exam&&r.date===date&&visibleScore(r)&&
       classIdOf(stuOf(r.studentId)||{})===cl);
     const clLabel=classLabel(DB.classes.find(c=>c.id===cl)||null);
     if(!list.length){ $('rk-result').innerHTML='<div class="empty">该班级本次考试暂无可见成绩记录</div>'; return; }
@@ -2855,7 +3168,7 @@ function renderCheating(){
 /* ----- 学生端：我的违纪记录（只读，仅已确认） ----- */
 function renderStudentCheating(){
   const list=confirmedCheating(session.id);
-  const mine=DB.scores.filter(r=>r.studentId===session.id)
+  const mine=effectiveScores().filter(r=>r.studentId===session.id)
     .sort((a,b)=>b.date.localeCompare(a.date));
   const examRows=mine.map(r=>'<tr><td>'+esc(r.date)+'</td><td>'+esc(r.exam)+'</td>'+
     '<td>'+fmtNum(r.total)+'</td><td>'+(cheatBadgeHtml(session.id,r.exam,r.date)||'<span class="badge soft">正常</span>')+'</td></tr>')
@@ -3159,7 +3472,7 @@ function renderStudentRequests(){
 function openPeerScores(targetId){
   if(!canViewPeer(session.id,targetId)) return toast('权限不足：该申请未获批准','err');
   const t=stuOf(targetId)||{};
-  const recs=DB.scores.filter(r=>r.studentId===targetId)
+  const recs=effectiveScores().filter(r=>r.studentId===targetId)
     .sort((a,b)=>b.date.localeCompare(a.date)||b.createdAt-a.createdAt);
   const rows=recs.map(r=>{
     const rk=classRank(r);
@@ -3225,11 +3538,38 @@ function renderAdminData(){
 }
 
 /* ----- 学生端：本人成绩（含排名与榜首姓名、关联评语） ----- */
+/** 班主任已提交、但尚未审核通过的新增成绩：只显示「审核中」，不泄露任何分数 */
+function pendingScoreCardHtml(r){
+  return '<div class="review-card" style="border-color:#fcd34d">'+
+    '<h3><span class="rv-icon">⏳</span>成绩正在审核中</h3>'+
+    '<div style="font-size:15px;font-weight:700;color:var(--navy-dark);margin-bottom:7px">'+
+      esc(r.exam)+' <span class="hint" style="font-weight:400">'+esc(r.date)+'</span></div>'+
+    '<div class="hint" style="line-height:1.9">'+
+      esc((r.submittedTitle||'班主任')+' '+(r.submittedName||'老师'))+' 已提交本次成绩，'+
+      '需由 <b>管理员</b> 或 <b>年级主任</b> 审核通过后才会显示各科分数、总分与排名。<br>'+
+      '提交时间：'+esc(r.submittedAt?new Date(r.submittedAt).toLocaleString():'—')+
+      (r.reviewNote?'<br>审核意见：'+esc(r.reviewNote):'')+'</div></div>';
+}
+/** 已生效成绩存在待审「修改 / 删除」申请时的醒目提示条 */
+function scoreReviewBarHtml(r){
+  if(!r.pendingEdit&&!r.pendingDelete) return '';
+  const m=r.pendingEdit||r.pendingDelete;
+  const what=r.pendingEdit?'成绩修改':'成绩删除申请';
+  return '<div class="review-bar">⏳ <b>'+what+'正在审核中</b><br>'+
+    esc((m.submittedTitle||'班主任')+' '+(m.submittedName||'老师'))+' 于 '+
+    esc(m.submittedAt?new Date(m.submittedAt).toLocaleString():'—')+' 提交，'+
+    '待管理员 / 年级主任审核'+(r.pendingEdit?'通过后将更新为新的分数':'通过后将移除本成绩')+'。<br>'+
+    '当前显示的仍是<b>审核前的原成绩</b>。</div>';
+}
 function renderStudentHome(){
-  const mine=DB.scores.filter(r=>r.studentId===session.id)
+  // 已生效成绩 + 待审核新增（占位展示「审核中」）；已驳回提交对学生完全不可见
+  const mine=studentVisibleScores(session.id)
     .sort((a,b)=>b.date.localeCompare(a.date)||b.createdAt-a.createdAt);
+  const effectiveCount=mine.filter(r=>r.status==='approved').length;
+  const waitingCount=mine.filter(r=>isPendingNew(r)||hasPendingChange(r)).length;
   const me=stuOf(session.id)||{};
   const cards=mine.map(r=>{
+    if(isPendingNew(r)) return pendingScoreCardHtml(r);   // 不显示分数、排名
     const rk=classRank(r), gr=gradeComboRank(r), f=firstNames(r);
     // 只展示语数英 + 本人选考三科，不显示其他选科科目
     const shown=subjectsForStudent(me,r);
@@ -3255,9 +3595,10 @@ function renderStudentHome(){
     return '<div class="exam-card"'+(cheatHit.length?' style="border-color:var(--danger);border-width:2px"':'')+'>'+
       '<div class="exam-head"><div><span class="t">'+esc(r.exam)+'</span> <span class="d">'+esc(r.date)+'</span></div>'+
         '<div style="display:flex;gap:8px;flex-wrap:wrap">'+
+          (hasPendingChange(r)?'<span class="badge pending">⏳ 成绩正在审核中</span>':'')+
           (cheatHit.length?'<span class="badge cheat">⚠ 作弊记录</span>':'')+
           '<span class="badge admin">总分 '+fmtNum(r.total)+'</span></div></div>'+
-      '<div class="exam-body">'+(cheatHit.length?cheatHtml:'')+
+      '<div class="exam-body">'+scoreReviewBarHtml(r)+(cheatHit.length?cheatHtml:'')+
         '<p class="hint" style="margin-bottom:9px">仅显示语数英及你的选科科目（'+esc(comboName(me))+'），共 '+shown.length+' 科；总分按全部已录科目合计</p>'+
         '<div class="subj-grid">'+cells+'</div>'+
         '<div class="exam-foot">'+
@@ -3278,7 +3619,8 @@ function renderStudentHome(){
     cheatAlertHtml(session.id)+
     '<div class="card" style="background:var(--navy-light);border-color:#c7d7f7">'+
       '<h2 style="margin-bottom:6px">'+esc(session.name||session.username)+' 同学，你好 👋</h2>'+
-      '<p class="hint">班级：<b>'+esc(classNameOf(me))+'</b> ｜ 年级：<b>'+esc(gradeOf(me))+'</b> ｜ 选科组合：<b>'+esc(comboName(me))+'</b> ｜ 共 '+mine.length+' 次考试</p>'+
+      '<p class="hint">班级：<b>'+esc(classNameOf(me))+'</b> ｜ 年级：<b>'+esc(gradeOf(me))+'</b> ｜ 选科组合：<b>'+esc(comboName(me))+'</b> ｜ 已生效 '+effectiveCount+' 次考试'+
+        (waitingCount?' ｜ <b style="color:#92400e">'+waitingCount+' 项成绩正在审核中</b>':'')+'</p>'+
       managersBlockHtml(classIdOf(me))+
       '<div style="display:flex;gap:9px;flex-wrap:wrap;margin-top:10px">'+
         '<a class="btn primary sm" href="#/student/trend">总分趋势 →</a>'+
@@ -3296,7 +3638,7 @@ function renderStudentHome(){
 }
 /* ----- 学生端：总分趋势折线图 ----- */
 function renderStudentTrend(){
-  const mine=DB.scores.filter(r=>r.studentId===session.id)
+  const mine=effectiveScores().filter(r=>r.studentId===session.id)
     .sort((a,b)=>a.date.localeCompare(b.date)||a.createdAt-b.createdAt);
   const labels=mine.map(r=>r.exam+' '+r.date.slice(5)),values=mine.map(r=>r.total);
   const rows=mine.slice().reverse().map(r=>{
@@ -3306,6 +3648,7 @@ function renderStudentTrend(){
   }).join('')||'<tr><td colspan="5" class="empty">暂无成绩</td></tr>';
   const content=
     '<div class="card"><h2>总分变化趋势 <span class="tag">按考试时间正序</span></h2>'+
+      '<p class="hint" style="margin-bottom:10px">仅统计已审核通过的成绩；班主任新提交或待审修改不计入趋势。</p>'+
       '<div class="chartbox"><canvas id="trendChart"></canvas></div>'+
     '</div>'+
     '<div class="card"><h2>历次考试明细</h2><div class="table-scroll"><table>'+
@@ -3435,9 +3778,13 @@ function parseImportScores(text){
     const allowed=allowedSubjects(stu);
     const extra=SUBJECTS.filter(sub=>!allowed.includes(sub)&&typeof scores[sub]==='number');
     if(extra.length){ errors.push('第'+(i+1)+'行：'+stu.name+' 选科为'+comboName(stu)+'，不能录入 '+extra.join('、')); return; }
-    if(DB.scores.some(r=>r.studentId===stu.id&&r.exam===exam&&r.date===date)){
-      errors.push('第'+(i+1)+'行：'+stu.name+' 的「'+exam+' '+date+'」已存在，跳过'); return; }
-    added.push({id:uid(),studentId:stu.id,exam,date,scores,total:totalOf(scores),createdAt:Date.now()});
+    if(DB.scores.some(r=>r.studentId===stu.id&&r.exam===exam&&r.date===date&&r.status!=='rejected')){
+      errors.push('第'+(i+1)+'行：'+stu.name+' 的「'+exam+' '+date+'」已存在（含待审核记录），跳过'); return; }
+    // 批量导入仅管理员可用，成绩直接生效，无需审核
+    added.push({id:uid(),studentId:stu.id,exam,date,scores,total:totalOf(scores),createdAt:Date.now(),
+      status:'approved',pendingEdit:null,pendingDelete:null,
+      submittedBy:null,submittedName:'',submittedTitle:'',submittedAt:null,
+      reviewedBy:null,reviewedName:'',reviewedAt:null,reviewNote:''});
   });
   DB.scores.push(...added); save('scores');
   return {added:added.length,errors};
@@ -3500,6 +3847,14 @@ function migrate(){
   if(!Array.isArray(DB.cheating)) DB.cheating=[];
   // 旧版作弊记录没有「分科」字段：补为空数组，按「整场考试」展示，不丢失原有标注
   DB.cheating.forEach(c=>{ if(!Array.isArray(c.subjects)) c.subjects=[]; });
+  // 旧版成绩没有审核字段：一律视为「已生效」，避免历史成绩被误判为待审核
+  DB.scores.forEach(r=>{
+    if(!r.status) r.status='approved';
+    if(r.pendingEdit===undefined) r.pendingEdit=null;
+    if(r.pendingDelete===undefined) r.pendingDelete=null;
+    if(r.submittedAt===undefined){ r.submittedBy=null;r.submittedName='';r.submittedTitle='';r.submittedAt=null; }
+    if(r.reviewedAt===undefined){ r.reviewedBy=null;r.reviewedName='';r.reviewedAt=null;r.reviewNote=''; }
+  });
   DB.students.forEach(s=>{
     if(!Array.isArray(s.combo)) s.combo=[];
     if(!Array.isArray(s.honors)) s.honors=[];   // 职称与奖项
